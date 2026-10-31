@@ -36,9 +36,9 @@ if ($Nce -and ($Game -eq "p5r" -or $Game -eq "p4g")) {
     if (-not (Test-Path $harness)) {
         throw "missing $harness. Build it once, with Docker Desktop running, from the repository root: docker run --rm -v ""${root}:/src"" -w /src mcr.microsoft.com/dotnet/sdk:10.0 sh games/p5r/tools/build_harness_android.sh"
     }
-$importLib = "${Game}import"
-$targets += $importLib
-$extraLibs += @("$build\lib$importLib.so", $harness)
+    $importLib = "${Game}import"
+    $targets += $importLib
+    $extraLibs += @("$build\lib$importLib.so", $harness)
 }
 cmake --build $build --target @targets
 if ($LASTEXITCODE) { throw "native build failed" }
