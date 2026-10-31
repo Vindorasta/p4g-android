@@ -27,3 +27,44 @@ jobs:
         run: |
           test -x ./p4g_gxp_test
           echo "GXP extractor compiled successfully"
+
+          
+      - name: Test GXP parser
+        run: |
+          python3 - <<'PY'
+          import struct
+
+          def record(name, size):
+              payload = (
+                  b"GXP\x00" +
+                  b"\x01\x04\x00\x00" +
+                  struct.pack("<I", size) +
+                  bytes(size - 12)
+              )
+              padding = (-size) % 32
+              return (
+                  name.encode("ascii").ljust(32, b"\x00") +
+                  struct.pack("<I", size + padding) +
+                  payload +
+                  bytes(padding)
+              )
+
+          header = b"shader_f_header.bin\x00"
+          header += bytes(40 - len(header))
+
+          data = header
+          data += record("F00000000_00000000.gxp", 285)
+          data += record("F00000000_00000020.gxp", 216)
+
+          with open("test_gxp.bin", "wb") as f:
+              f.write(data)
+          PY
+
+          ./p4g_gxp_test test_gxp.bin | tee result.txt
+
+          grep -q "Total de programas GXP: 2" result.txt
+          grep -q "F00000000_00000000.gxp" result.txt
+          grep -q "F00000000_00000020.gxp" result.txt
+
+          echo "GXP parser test passed!"
+
