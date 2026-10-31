@@ -141,6 +141,35 @@ bool prepare_utf_table(
     return true;
 }
 
+
+size_t utf_value_size(int type) {
+    switch (type) {
+        case 0:
+        case 1:
+            return 1;
+
+        case 2:
+        case 3:
+            return 2;
+
+        case 4:
+        case 5:
+        case 8:
+        case 0xA:
+            return 4;
+
+        case 6:
+        case 7:
+        case 9:
+        case 0xB:
+            return 8;
+
+        default:
+            return 0;
+    }
+}
+
+
 uint64_t read_le64(const uint8_t* p) {
     uint64_t value = 0;
 
