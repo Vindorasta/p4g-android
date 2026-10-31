@@ -146,3 +146,30 @@ jobs:
           test -f build-apk/base.apk
           echo "P4G APK resources built successfully"
 
+
+      - name: Package P4G APK
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          apk = Path("build-apk/base.apk")
+
+          files = {
+              "classes.dex": "build-java/dex/classes.dex",
+              "lib/arm64-v8a/libp4g.so": "build-p4g/libp4g.so",
+              "lib/arm64-v8a/libp4gimport.so": "build-p4g/libp4gimport.so",
+          }
+
+          with zipfile.ZipFile(apk, "a") as z:
+              for dest, source in files.items():
+                  assert Path(source).is_file(), source
+                  z.write(source, dest, zipfile.ZIP_DEFLATED)
+
+          print("P4G APK packaged successfully")
+          PY
+
+      - name: Verify P4G APK contents
+        run: |
+          unzip -l build-apk/base.apk | grep -E \
+            'classes.dex|libp4g.so|libp4gimport.so'
