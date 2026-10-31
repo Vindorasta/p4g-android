@@ -551,97 +551,199 @@ bool list_cpk_files(
     const uint32_t file_count =
         read_be32(toc_data.data() + 28);
 
-    // Etapa 61.34: ler o primeiro arquivo do TOC.
+    // Etapas 61.36-61.40: percorrer o TOC e verificar os seis shaders.
     if (file_count == 0) {
         error = "P4G: TOC vazio";
         return false;
     }
 
-    const size_t toc_row_start =
+    const uint64_t toc_row_start =
         8ull + read_be16(toc_data.data() + 10);
-
-    const size_t toc_row_size =
+    const uint64_t toc_row_size =
         read_be16(toc_data.data() + 26);
-
     const uint64_t strings_offset =
         8ull + read_be32(toc_data.data() + 12);
 
     if (toc_row_start > toc_data.size() ||
-        toc_row_size > toc_data.size() - toc_row_start) {
-        error = "P4G: primeira linha TOC invalida";
+        toc_row_size == 0 ||
+        uint64_t(file_count) >
+            (toc_data.size() - toc_row_start) / toc_row_size) {
+        error = "P4G: linhas do TOC fora dos limites";
         return false;
     }
 
-    size_t cursor = toc_row_start;
-    const size_t toc_row_end = toc_row_start + toc_row_size;
+    // Os deslocamentos de arquivos CRI CPK sao relativos ao menor
+    // entre TocOffset e ContentOffset, conforme a convencao CPK.
+    const uint64_t file_base = (toc < content) ? toc : content;
 
-    std::string dir_name;
-    std::string file_name;
+    const char* targets[] = {
+        "output_cnv_v_standard.bin",
+        "output_cnv_f_standard.bin",
+        "output_cnv_v_effect.bin",
+        "output_cnv_f_effect.bin",
+        "output_cnv_v_sprite.bin",
+        "output_cnv_f_sprite.bin"
+    };
+    constexpr size_t target_count = sizeof(targets) / sizeof(targets[0]);
+    bool found[target_count] = {};
+    size_t found_count = 0;
+    size_t checked_count = 0;
+    size_t compressed_count = 0;
+    std::string first_file;
 
-    for (const auto& col : toc_columns) {
-        const size_t n = utf_value_size(col.type);
+    for (uint32_t row = 0; row < file_count; ++row) {
+        const size_t row_start = static_cast<size_t>(
+            toc_row_start + uint64_t(row) * toc_row_size);
+        const size_t row_end = row_start + static_cast<size_t>(toc_row_size);
+        size_t cursor = row_start;
 
-        if (n == 0) {
-            error = "P4G: tipo de coluna desconhecido";
-            return false;
-        }
+        std::string dir_name;
+        std::string file_name;
+        uint64_t file_offset = 0;
+        uint64_t file_size = 0;
+        uint64_t extract_size = 0;
+        bool has_offset = false;
+        bool has_size = false;
+        bool has_extract_size = false;
+        bool has_name = false;
 
-        size_t value_pos = 0;
-
-        if (col.storage == 0x50) {
-            if (cursor > toc_row_end ||
-                n > toc_row_end - cursor) {
-                error = "P4G: linha TOC truncada";
+        for (const auto& col : toc_columns) {
+            const size_t n = utf_value_size(col.type);
+            if (n == 0) {
+                error = "P4G: tipo de coluna TOC desconhecido";
                 return false;
             }
 
-            value_pos = cursor;
-            cursor += n;
+            size_t value_pos = 0;
+            if (col.storage == 0x50) {
+                if (cursor > row_end || n > row_end - cursor) {
+                    error = "P4G: linha TOC truncada: " + std::to_string(row);
+                    return false;
+                }
+                value_pos = cursor;
+                cursor += n;
+            } else if (col.storage == 0x30) {
+                value_pos = col.constant_offset;
+            } else if (col.storage == 0x10) {
+                continue;
+            } else {
+                error = "P4G: armazenamento TOC desconhecido";
+                return false;
+            }
 
-        } else if (col.storage == 0x30) {
-            value_pos = col.constant_offset;
-
-        } else {
-            continue;
+            if (col.name == "DirName" || col.name == "FileName") {
+                if (col.type != 0xA ||
+                    value_pos > toc_data.size() ||
+                    4 > toc_data.size() - value_pos) {
+                    error = "P4G: campo de nome invalido no TOC";
+                    return false;
+                }
+                const uint32_t str_offset =
+                    read_be32(toc_data.data() + value_pos);
+                std::string value;
+                if (!read_utf_string(
+                        toc_data, strings_offset, str_offset, value)) {
+                    error = "P4G: string invalida na linha " +
+                            std::to_string(row);
+                    return false;
+                }
+                if (col.name == "DirName") {
+                    dir_name = value;
+                } else {
+                    file_name = value;
+                    has_name = true;
+                }
+            } else if (col.name == "FileOffset" ||
+                       col.name == "FileSize" ||
+                       col.name == "ExtractSize") {
+                uint64_t value = 0;
+                if (!read_utf_integer(
+                        toc_data, value_pos, col.type, value)) {
+                    error = "P4G: valor numerico invalido na linha " +
+                            std::to_string(row);
+                    return false;
+                }
+                if (col.name == "FileOffset") {
+                    file_offset = value;
+                    has_offset = true;
+                } else if (col.name == "FileSize") {
+                    file_size = value;
+                    has_size = true;
+                } else {
+                    extract_size = value;
+                    has_extract_size = true;
+                }
+            }
         }
 
-        if (col.name != "DirName" &&
-            col.name != "FileName") {
-            continue;
+        if (row == 0) {
+            first_file = dir_name + "/" + file_name;
         }
 
-        if (col.type != 0xA ||
-            value_pos > toc_data.size() ||
-            4 > toc_data.size() - value_pos) {
-            error = "P4G: string TOC invalida";
+        // Para este teste, apenas os seis pacotes de shader sao lidos.
+        if (!has_name) {
+            continue;
+        }
+        size_t target = target_count;
+        for (size_t i = 0; i < target_count; ++i) {
+            if (file_name == targets[i] &&
+                (dir_name == "shader" ||
+                 dir_name == "/shader" ||
+                 dir_name == "shader/")) {
+                target = i;
+                break;
+            }
+        }
+        if (target == target_count || found[target]) {
+            continue;
+        }
+        if (!has_offset || !has_size || !has_extract_size) {
+            error = "P4G: metadados incompletos: " + file_name;
+            return false;
+        }
+        if (file_offset > cpk.size - file_base ||
+            file_size > cpk.size - file_base - file_offset) {
+            error = "P4G: offset/tamanho fora do CPK: " + file_name;
             return false;
         }
 
-        const uint32_t str_offset =
-            read_be32(toc_data.data() + value_pos);
-
-        std::string value;
-
-        if (!read_utf_string(
-                toc_data,
-                strings_offset,
-                str_offset,
-                value)) {
-            error = "P4G: falha ao ler nome do TOC";
+        // Leitura binaria de amostra, sem descomprimir nem salvar arquivos.
+        uint8_t sample[16] = {};
+        const uint64_t sample_size = (file_size < sizeof(sample))
+            ? file_size : sizeof(sample);
+        if (sample_size == 0 ||
+            game.read(cpk, file_base + file_offset,
+                      sample, sample_size) != sample_size) {
+            error = "P4G: falha na leitura binaria: " + file_name;
             return false;
         }
 
-        if (col.name == "DirName") {
-            dir_name = value;
-        } else {
-            file_name = value;
+        found[target] = true;
+        ++found_count;
+        ++checked_count;
+        if (extract_size > file_size) {
+            ++compressed_count;
         }
     }
 
-    error = "P4G: primeiro arquivo do TOC: " +
-            dir_name + "/" + file_name +
-            ". Leitura completa pendente.";
-
+    error = "P4G: TOC=" + std::to_string(file_count) +
+            ", shaders=" + std::to_string(found_count) + "/6" +
+            ", leitura=" + std::to_string(checked_count) + "/6" +
+            ", comprimidos=" + std::to_string(compressed_count) + ".";
+    if (found_count != target_count) {
+        error += " Ausentes:";
+        for (size_t i = 0; i < target_count; ++i) {
+            if (!found[i]) {
+                error += " ";
+                error += targets[i];
+            }
+        }
+        error += ". Primeiro: " + first_file;
+    } else {
+        error += " Extracao/descompressao ainda pendente.";
+    }
+    // Continua retornando false: o importador de shaders ainda nao
+    // esta implementado. Este passo e apenas um diagnostico.
     return false;
 }
 
