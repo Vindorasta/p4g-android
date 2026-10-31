@@ -278,3 +278,31 @@ endif()
 if(NX_NCE)
     target_compile_definitions(${NX_GAME} PRIVATE NX_NCE=1)
 endif()
+
+
+# Persona 4 Golden Android - Native Importer
+if(ANDROID AND NX_GAME STREQUAL "p4g")
+    add_library(p4gimport SHARED
+        games/p4g/import/p4g_import_jni.cpp
+        games/p4g/import/p4g_shaders.cpp
+        "${NX_IMPORTER_DIR}/nximport.cpp"
+        "${NX_IMPORTER_DIR}/nxcrypto.cpp"
+    )
+
+    target_include_directories(p4gimport PRIVATE
+        "${NX_IMPORTER_DIR}"
+        games/p4g/import
+    )
+
+    target_compile_options(p4gimport PRIVATE
+        -O2
+        -fvisibility=hidden
+        -march=armv8-a+crypto
+    )
+
+    target_link_libraries(p4gimport PRIVATE log dl)
+
+    target_link_options(p4gimport PRIVATE
+        -Wl,-z,max-page-size=16384
+    )
+endif()
