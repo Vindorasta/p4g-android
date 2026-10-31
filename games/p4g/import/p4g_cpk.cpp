@@ -18,6 +18,42 @@ struct UtfValue {
 
 using UtfRow = std::map<std::string, UtfValue>;
 
+
+bool read_utf_string(
+    const std::vector<uint8_t>& data,
+    uint64_t strings_offset,
+    uint32_t string_offset,
+    std::string& result
+) {
+    result.clear();
+
+    if (strings_offset > data.size() ||
+        string_offset > data.size() - strings_offset) {
+        return false;
+    }
+
+    size_t start =
+        static_cast<size_t>(strings_offset + string_offset);
+
+    size_t end = start;
+
+    while (end < data.size() && data[end] != 0) {
+        ++end;
+    }
+
+    if (end == data.size()) {
+        return false;
+    }
+
+    result.assign(
+        reinterpret_cast<const char*>(data.data() + start),
+        end - start
+    );
+
+    return true;
+}
+
+
 uint16_t read_be16(const uint8_t* p) {
     return (uint16_t(p[0]) << 8) |
            uint16_t(p[1]);
