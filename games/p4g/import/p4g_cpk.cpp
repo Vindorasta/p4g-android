@@ -167,6 +167,7 @@ size_t utf_value_size(int type) {
     }
 }
 
+// Identificar as colunas @UTF.
 struct UtfColumn {
     std::string name;
     int storage = 0;
@@ -532,7 +533,7 @@ bool list_cpk_files(
         return false;
     }
 
-    // Etapa 61.30: identificar as colunas do TOC.
+    // Identificar as colunas do TOC.
     std::vector<UtfColumn> toc_columns;
 
     if (!read_utf_columns(
@@ -550,13 +551,18 @@ bool list_cpk_files(
     const uint32_t file_count =
         read_be32(toc_data.data() + 28);
 
-    // Diagnostico temporario.
-    error = "P4G: TOC reconhecido! "
-            "Colunas: " +
-            std::to_string(toc_columns.size()) +
-            ", linhas: " +
+    // Etapa 61.32: mostrar os nomes das colunas.
+    error = "P4G: TOC possui " +
             std::to_string(file_count) +
-            ". Extracao pendente.";
+            " arquivos. Colunas: ";
+
+    for (size_t i = 0; i < toc_columns.size(); ++i) {
+        if (i != 0) {
+            error += ", ";
+        }
+
+        error += toc_columns[i].name;
+    }
 
     return false;
 }
