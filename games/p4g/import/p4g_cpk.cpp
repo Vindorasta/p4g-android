@@ -424,7 +424,7 @@ bool list_cpk_files(
         return false;
     }
 
-    // Etapa 61.26: ler a primeira linha UTF.
+    // Ler a primeira linha UTF.
     const size_t row_offset =
         8ull + read_be16(header.data() + 10);
 
@@ -514,12 +514,29 @@ bool list_cpk_files(
         return false;
     }
 
+    // Etapa 61.28: ler o indice TOC.
+    std::vector<uint8_t> toc_data;
+
+    if (!read_cpk_block(
+            game,
+            cpk,
+            toc,
+            "TOC ",
+            toc_data,
+            error)) {
+        return false;
+    }
+
+    // Validar a tabela @UTF do TOC.
+    if (!prepare_utf_table(toc_data, error)) {
+        return false;
+    }
+
     // Diagnostico temporario.
-    error = "P4G: TocOffset=" +
-            std::to_string(toc) +
-            ", ContentOffset=" +
-            std::to_string(content) +
-            ". Leitura TOC pendente.";
+    error = "P4G: indice TOC encontrado! "
+            "Tabela UTF valida. Tamanho: " +
+            std::to_string(toc_data.size()) +
+            " bytes. Leitura de arquivos pendente.";
 
     return false;
 }
