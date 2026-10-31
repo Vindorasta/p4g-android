@@ -100,8 +100,19 @@ int run(int nsp_fd, const std::string& nsp_name, const std::string& keys, const 
     close(kfd);
     if (tfd >= 0) close(tfd);
     if (!game) return fail(err);
-    if (!is_supported_title(game->title_id()))
-        return fail("unsupported Title ID: " + nxi::tid_str(game->title_id()) + " (expected Persona 5 Royal US, EU, JP, or Asia)");
+    if (!is_supported_title(game->title_id())) {
+    char title_id[32];
+    std::snprintf(
+        title_id,
+        sizeof(title_id),
+        "%016llX",
+        static_cast<unsigned long long>(game->title_id())
+    );
+    return fail(
+        std::string("Unsupported Title ID: ") + title_id +
+        " (expected Persona 4 Golden: 010062B01525C000)"
+    );
+}
     auto main_it = game->exefs().find("main");
     if (main_it == game->exefs().end() || main_it->second.size() < 0x48) return fail("the game file has no main");
     char id[17];
