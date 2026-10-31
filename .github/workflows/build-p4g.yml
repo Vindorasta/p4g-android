@@ -173,3 +173,41 @@ jobs:
         run: |
           unzip -l build-apk/base.apk | grep -E \
             'classes.dex|libp4g.so|libp4gimport.so'
+
+
+      - name: Sign P4G APK
+        run: |
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+
+          "$BUILD_TOOLS/zipalign" -f -p 4 \
+            build-apk/base.apk \
+            build-apk/aligned.apk
+
+          keytool -genkeypair \
+            -keystore build-apk/debug.keystore \
+            -alias androiddebugkey \
+            -storepass android \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 365 \
+            -dname "CN=Android Debug,O=Development,C=BR"
+
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks build-apk/debug.keystore \
+            --ks-key-alias androiddebugkey \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out build-apk/p4g-android-alpha.apk \
+            build-apk/aligned.apk
+
+          "$BUILD_TOOLS/apksigner" verify \
+            --verbose \
+            build-apk/p4g-android-alpha.apk
+
+      - name: Upload P4G APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Persona-4-Golden-Android-Alpha
+          path: build-apk/p4g-android-alpha.apk
+          if-no-files-found: error
