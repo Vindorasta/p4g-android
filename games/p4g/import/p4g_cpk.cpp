@@ -166,7 +166,7 @@ size_t utf_value_size(int type) {
     }
 }
 
-// Etapa 61.23: identificar as colunas @UTF.
+// Identificar as colunas @UTF.
 struct UtfColumn {
     std::string name;
     int storage = 0;
@@ -343,14 +343,29 @@ bool list_cpk_files(
         return false;
     }
 
-    // Verificar a tabela @UTF do cabecalho CPK.
+    // Validar a tabela @UTF do cabecalho CPK.
     if (!prepare_utf_table(header, error)) {
         return false;
     }
 
+    // Etapa 61.24: interpretar as colunas @UTF.
+    std::vector<UtfColumn> columns;
+
+    if (!read_utf_columns(header, columns, error)) {
+        return false;
+    }
+
+    if (columns.empty()) {
+        error = "P4G: nenhuma coluna UTF encontrada";
+        return false;
+    }
+
     // Diagnostico temporario.
-    error = "P4G: tabela @UTF do CPK reconhecida! "
-            "Leitura do indice TOC ainda pendente.";
+    error = "P4G: leitura UTF funcionando! "
+            "Colunas encontradas: " +
+            std::to_string(columns.size()) +
+            ". Indice TOC ainda pendente.";
+
     return false;
 }
 
