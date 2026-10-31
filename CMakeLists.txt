@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # The game this build is for: games/<NX_GAME>/ holds what only that game needs (game.cpp: nx/game.h), the shared
 # runtime is the rest. One build directory per game.
-set(NX_GAME "p5r" CACHE STRING "Game to build (a folder under games/)")
+set(NX_GAME "p4g" CACHE STRING "Game to build (a folder under games/)")
 set(NX_GAME_DIR "${CMAKE_SOURCE_DIR}/games/${NX_GAME}")
 if(NOT EXISTS "${NX_GAME_DIR}/game.cpp")
     message(FATAL_ERROR "games/${NX_GAME}/game.cpp not found")
