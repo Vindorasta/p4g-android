@@ -10,7 +10,6 @@ namespace p4g {
 
 namespace {
 
-
 struct UtfValue {
     int type = -1;
     uint64_t u = 0;
@@ -18,7 +17,6 @@ struct UtfValue {
 };
 
 using UtfRow = std::map<std::string, UtfValue>;
-
 
 uint16_t read_be16(const uint8_t* p) {
     return (uint16_t(p[0]) << 8) |
@@ -37,6 +35,75 @@ uint64_t read_be64(const uint8_t* p) {
            uint64_t(read_be32(p + 4));
 }
 
+// Etapa 61.18: preparar tabelas @UTF do CRIWARE.
+bool prepare_utf_table(
+    std::vector<uint8_t>& data,
+    std::string& error
+) {
+    if (data.size() < 32) {
+        error = "CPK: tabela UTF muito pequena";
+        return false;
+    }
+
+    // Algumas tabelas CRIWARE sao ofuscadas.
+    if (std::memcmp(data.data(), "@UTF", 4) != 0) {
+        uint32_t key = 0x655F;
+
+        for (uint8_t& byte : data) {
+            byte ^= static_cast<uint8_t>(key);
+            key *= 0x4115;
+        }
+    }
+
+    if (std::memcmp(data.data(), "@UTF", 4) != 0) {
+        error = "CPK: assinatura UTF invalida";
+        return false;
+    }
+
+    // Offsets relativos a base 8 do formato @UTF.
+    constexpr uint64_t base = 8;
+
+    uint64_t rows =
+        base + read_be16(data.data() + 10);
+
+    uint64_t strings =
+        base + read_be32(data.data() + 12);
+
+    uint64_t binary =
+        base + read_be32(data.data() + 16);
+
+    uint16_t columns =
+        read_be16(data.data() + 24);
+
+    uint16_t row_size =
+        read_be16(data.data() + 26);
+
+    uint32_t row_count =
+        read_be32(data.data() + 28);
+
+    if (rows > data.size() ||
+        strings > data.size() ||
+        binary > data.size()) {
+        error = "CPK: offsets UTF invalidos";
+        return false;
+    }
+
+    if (columns == 0 ||
+        (row_count != 0 && row_size == 0)) {
+        error = "CPK: dimensoes UTF invalidas";
+        return false;
+    }
+
+    uint64_t table_bytes =
+        uint64_t(row_count) * row_size;
+
+    if (table_bytes > data.size() - rows) {
+        error = "CPK: linhas UTF fora dos limites";
+        return false;
+    }
+
+    return true;
+}
 
 uint64_t read_le64(const uint8_t* p) {
     uint64_t value = 0;
