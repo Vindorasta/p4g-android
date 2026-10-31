@@ -40,6 +40,16 @@ jobs:
           test -d "$ANDROID_HOME/ndk/28.2.13676358"
           echo "Android build environment ready"
 
+
+      - name: Download Vulkan Headers
+        run: |
+          git clone --depth 1 \
+            https://github.com/KhronosGroup/Vulkan-Headers.git \
+            vulkan-headers
+          ln -s include vulkan-headers/Include
+          test -f vulkan-headers/Include/vulkan/vulkan.h
+          echo "Vulkan Headers ready"
+
           
       - name: Configure P4G ARM64
         run: |
@@ -49,6 +59,7 @@ jobs:
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-29 \
             -DANDROID_STL=c++_static \
+            -DNX_VULKAN_SDK="$GITHUB_WORKSPACE/vulkan-headers" \
             -DNX_GAME=p4g \
             -DNX_NCE=ON
 
