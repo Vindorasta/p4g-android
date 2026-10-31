@@ -18,7 +18,6 @@ struct UtfValue {
 
 using UtfRow = std::map<std::string, UtfValue>;
 
-
 bool read_utf_string(
     const std::vector<uint8_t>& data,
     uint64_t strings_offset,
@@ -53,7 +52,6 @@ bool read_utf_string(
     return true;
 }
 
-
 uint16_t read_be16(const uint8_t* p) {
     return (uint16_t(p[0]) << 8) |
            uint16_t(p[1]);
@@ -71,7 +69,7 @@ uint64_t read_be64(const uint8_t* p) {
            uint64_t(read_be32(p + 4));
 }
 
-// Etapa 61.18: preparar tabelas @UTF do CRIWARE.
+// Preparar tabelas @UTF do CRIWARE.
 bool prepare_utf_table(
     std::vector<uint8_t>& data,
     std::string& error
@@ -141,7 +139,6 @@ bool prepare_utf_table(
     return true;
 }
 
-
 size_t utf_value_size(int type) {
     switch (type) {
         case 0:
@@ -169,6 +166,94 @@ size_t utf_value_size(int type) {
     }
 }
 
+// Etapa 61.23: identificar as colunas @UTF.
+struct UtfColumn {
+    std::string name;
+    int storage = 0;
+    int type = 0;
+    size_t constant_offset = 0;
+};
+
+bool read_utf_columns(
+    const std::vector<uint8_t>& data,
+    std::vector<UtfColumn>& columns,
+    std::string& error
+) {
+    columns.clear();
+
+    if (data.size() < 32 ||
+        std::memcmp(data.data(), "@UTF", 4) != 0) {
+        error = "CPK: tabela UTF invalida";
+        return false;
+    }
+
+    const uint64_t rows_offset =
+        8ull + read_be16(data.data() + 10);
+
+    const uint64_t strings_offset =
+        8ull + read_be32(data.data() + 12);
+
+    const uint16_t count =
+        read_be16(data.data() + 24);
+
+    size_t pos = 0x20;
+
+    if (rows_offset > data.size() ||
+        strings_offset > data.size()) {
+        error = "CPK: offsets UTF invalidos";
+        return false;
+    }
+
+    for (uint16_t i = 0; i < count; ++i) {
+        if (pos > rows_offset ||
+            rows_offset - pos < 5) {
+            error = "CPK: coluna UTF truncada";
+            return false;
+        }
+
+        const uint8_t flags = data[pos];
+
+        UtfColumn col;
+        col.storage = flags & 0xF0;
+        col.type = flags & 0x0F;
+
+        const uint32_t name_offset =
+            read_be32(data.data() + pos + 1);
+
+        if (!read_utf_string(
+                data,
+                strings_offset,
+                name_offset,
+                col.name)) {
+            error = "CPK: nome de coluna invalido";
+            return false;
+        }
+
+        pos += 5;
+
+        if (col.storage == 0x30) {
+            const size_t size =
+                utf_value_size(col.type);
+
+            if (size == 0 ||
+                size > rows_offset - pos) {
+                error = "CPK: constante UTF invalida";
+                return false;
+            }
+
+            col.constant_offset = pos;
+            pos += size;
+        } else if (col.storage != 0x10 &&
+                   col.storage != 0x50) {
+            error = "CPK: armazenamento UTF desconhecido";
+            return false;
+        }
+
+        columns.push_back(col);
+    }
+
+    return true;
+}
 
 uint64_t read_le64(const uint8_t* p) {
     uint64_t value = 0;
@@ -258,7 +343,6 @@ bool list_cpk_files(
         return false;
     }
 
-
     // Verificar a tabela @UTF do cabecalho CPK.
     if (!prepare_utf_table(header, error)) {
         return false;
@@ -268,7 +352,6 @@ bool list_cpk_files(
     error = "P4G: tabela @UTF do CPK reconhecida! "
             "Leitura do indice TOC ainda pendente.";
     return false;
-
 }
 
 } // namespace p4g
