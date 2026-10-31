@@ -31,13 +31,14 @@ if ($Release) { cmake -B $build -DNX_RELEASE=ON | Out-Null }
 # shader translator (libspirvharness.so, built in Docker by games/p5r/tools/build_harness_android.sh).
 $extraLibs = @()
 $targets = @($Game)
-if ($Nce -and $Game -eq "p5r") {
+if ($Nce -and ($Game -eq "p5r" -or $Game -eq "p4g")) {
     $harness = "$root\private\build\spirv_harness_android\libspirvharness.so"
     if (-not (Test-Path $harness)) {
         throw "missing $harness. Build it once, with Docker Desktop running, from the repository root: docker run --rm -v ""${root}:/src"" -w /src mcr.microsoft.com/dotnet/sdk:10.0 sh games/p5r/tools/build_harness_android.sh"
     }
-    $targets += "p5rimport"
-    $extraLibs += @("$build\libp5rimport.so", $harness)
+$importLib = "${Game}import"
+$targets += $importLib
+$extraLibs += @("$build\lib$importLib.so", $harness)
 }
 cmake --build $build --target @targets
 if ($LASTEXITCODE) { throw "native build failed" }
