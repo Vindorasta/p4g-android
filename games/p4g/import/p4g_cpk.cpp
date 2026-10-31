@@ -193,9 +193,17 @@ bool list_cpk_files(
         return false;
     }
 
-    // Proxima etapa: interpretar @UTF e localizar TOC.
-    error = "CPK: cabecalho lido; parser TOC pendente";
+
+    // Verificar a tabela @UTF do cabecalho CPK.
+    if (!prepare_utf_table(header, error)) {
+        return false;
+    }
+
+    // Diagnostico temporario.
+    error = "P4G: tabela @UTF do CPK reconhecida! "
+            "Leitura do indice TOC ainda pendente.";
     return false;
+
 }
 
 } // namespace p4g
