@@ -82,3 +82,20 @@ jobs:
             build-p4g/libp4g.so
             build-p4g/libp4gimport.so
           if-no-files-found: error
+
+
+      - name: Compile P4G Java classes
+        run: |
+          mkdir -p build-java/classes
+
+          find games/p4g/java -name "*.java" \
+            > build-java/sources.txt
+
+          javac \
+            -encoding UTF-8 \
+            --release 8 \
+            -classpath "$ANDROID_HOME/platforms/android-35/android.jar" \
+            -d build-java/classes \
+            @build-java/sources.txt
+
+          echo "P4G Java compilation successful"
