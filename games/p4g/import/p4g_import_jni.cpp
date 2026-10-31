@@ -152,14 +152,14 @@ int run(int nsp_fd, const std::string& nsp_name, const std::string& keys, const 
 
 extern "C" {
 
-JNIEXPORT jint JNICALL Java_io_github_p5rrecomp_Importer_run(JNIEnv* env, jclass, jint nsp_fd, jstring nsp_name,
+JNIEXPORT jint JNICALL Java_io_github_p4grecomp_Importer_run(JNIEnv* env, jclass, jint nsp_fd, jstring nsp_name,
                                                              jstring keys, jstring title_keys, jstring data_dir,
                                                              jstring work_dir, jint jobs) {
     return run(nsp_fd, jstr(env, nsp_name), jstr(env, keys), jstr(env, title_keys), jstr(env, data_dir),
                jstr(env, work_dir), jobs);
 }
 
-JNIEXPORT jintArray JNICALL Java_io_github_p5rrecomp_Importer_progress(JNIEnv* env, jclass) {
+JNIEXPORT jintArray JNICALL Java_io_github_p4grecomp_Importer_progress(JNIEnv* env, jclass) {
     int v[3] = {g_phase.load(), g_done.load(), g_total.load()};
     if (v[0] == 3 && g_harness_progress) g_harness_progress(&v[1], &v[2]);
     jintArray a = env->NewIntArray(3);
@@ -167,7 +167,7 @@ JNIEXPORT jintArray JNICALL Java_io_github_p5rrecomp_Importer_progress(JNIEnv* e
     return a;
 }
 
-JNIEXPORT jstring JNICALL Java_io_github_p5rrecomp_Importer_error(JNIEnv* env, jclass) {
+JNIEXPORT jstring JNICALL Java_io_github_p4grecomp_Importer_error(JNIEnv* env, jclass) {
     std::lock_guard lk(g_error_lock);
     return env->NewStringUTF(g_error.c_str());
 }
