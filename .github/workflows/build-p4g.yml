@@ -99,3 +99,28 @@ jobs:
             @build-java/sources.txt
 
           echo "P4G Java compilation successful"
+
+
+      - name: Generate P4G DEX
+        run: |
+          mkdir -p build-java/dex
+
+          find build-java/classes -name "*.class" \
+            > build-java/class-files.txt
+
+          "$ANDROID_HOME/build-tools/35.0.0/d8" \
+            --release \
+            --min-api 30 \
+            --lib "$ANDROID_HOME/platforms/android-35/android.jar" \
+            --output build-java/dex \
+            $(cat build-java/class-files.txt)
+
+          test -f build-java/dex/classes.dex
+          echo "P4G classes.dex generated successfully"
+
+      - name: Upload P4G DEX
+        uses: actions/upload-artifact@v4
+        with:
+          name: p4g-android-dex
+          path: build-java/dex/classes.dex
+          if-no-files-found: error
