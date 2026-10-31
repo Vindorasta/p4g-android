@@ -72,3 +72,13 @@ jobs:
       - name: Build P4G importer
         run: |
           cmake --build build-p4g --target p4gimport -j 2
+
+
+      - name: Upload P4G native libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: p4g-android-arm64-libs
+          path: |
+            build-p4g/libp4g.so
+            build-p4g/libp4gimport.so
+          if-no-files-found: error
