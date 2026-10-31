@@ -4,10 +4,20 @@
 #include <cstring>
 #include <limits>
 #include <vector>
+#include <map>
 
 namespace p4g {
 
 namespace {
+
+
+struct UtfValue {
+    int type = -1;
+    uint64_t u = 0;
+    std::string s;
+};
+
+using UtfRow = std::map<std::string, UtfValue>;
 
 
 uint16_t read_be16(const uint8_t* p) {
