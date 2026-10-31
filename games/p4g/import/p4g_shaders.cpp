@@ -1,5 +1,6 @@
 
 #include "p4g_shaders.h"
+#include "p4g_gxp.h"
 
 namespace p4g {
 
