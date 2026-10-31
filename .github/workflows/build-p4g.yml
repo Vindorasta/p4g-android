@@ -124,3 +124,25 @@ jobs:
           name: p4g-android-dex
           path: build-java/dex/classes.dex
           if-no-files-found: error
+
+      
+      - name: Build P4G APK resources
+        run: |
+          mkdir -p build-apk
+
+          AAPT2="$ANDROID_HOME/build-tools/35.0.0/aapt2"
+          ANDROID_JAR="$ANDROID_HOME/platforms/android-35/android.jar"
+
+          "$AAPT2" compile \
+            --dir android/res \
+            -o build-apk/resources.zip
+
+          "$AAPT2" link \
+            -o build-apk/base.apk \
+            -I "$ANDROID_JAR" \
+            --manifest games/p4g/AndroidManifest.xml \
+            build-apk/resources.zip
+
+          test -f build-apk/base.apk
+          echo "P4G APK resources built successfully"
+
