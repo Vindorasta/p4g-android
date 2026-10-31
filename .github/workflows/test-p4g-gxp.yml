@@ -68,3 +68,40 @@ jobs:
 
           echo "GXP parser test passed!"
 
+
+      - name: Test corrupted GXP files
+        run: |
+          python3 - <<'PY'
+          import struct
+
+          original = bytearray(open("test_gxp.bin", "rb").read())
+
+          # Primeiro registro:
+          # cabecalho externo de 40 bytes
+          # nome de 32 bytes + tamanho de 4 bytes
+          gxp_start = 40 + 36
+
+          # Assinatura incorreta
+          broken = original.copy()
+          broken[gxp_start:gxp_start + 4] = b"BAD!"
+          open("bad_magic.bin", "wb").write(broken)
+
+          # Tamanho interno inconsistente
+          broken = original.copy()
+          struct.pack_into("<I", broken, gxp_start + 8, 9999)
+          open("bad_size.bin", "wb").write(broken)
+
+          # Segundo registro incompleto
+          open("truncated.bin", "wb").write(original[:-20])
+          PY
+
+          for file in bad_magic.bin bad_size.bin truncated.bin; do
+            if ./p4g_gxp_test "$file"; then
+              echo "ERROR: Invalid file accepted: $file"
+              exit 1
+            else
+              echo "Correctly rejected: $file"
+            fi
+          done
+
+          echo "All corrupted GXP tests passed!"
