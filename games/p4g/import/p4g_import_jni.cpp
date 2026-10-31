@@ -19,7 +19,7 @@
 #include <vector>
 
 #include "nxgame.h"
-#include "p5r_shaders.h"
+#include "p4g_shaders.h"
 
 namespace {
 
@@ -115,7 +115,7 @@ int run(int nsp_fd, const std::string& nsp_name, const std::string& keys, const 
     remove_tree(work_dir);
     mkdir(work_dir.c_str(), 0700);
     const std::string extracted = work_dir + "/shaders";
-    long blocks = p5r::extract_shaders(*game, extracted, [](int d, int t) { g_done = d, g_total = t; }, err);
+    long blocks = p4g::extract_shaders(*game, extracted, [](int d, int t) { g_done = d, g_total = t; }, err);
     if (blocks < 0) return fail(err);
 
     // 3. translated (the harness counts its own progress)
