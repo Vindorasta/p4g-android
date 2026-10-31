@@ -7,7 +7,7 @@ package io.github.p4grecomp;
  */
 final class Importer {
     static {
-        System.loadLibrary("p5rimport");
+        System.loadLibrary("p4gimport");
     }
 
     static native int run(
