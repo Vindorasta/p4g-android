@@ -7,7 +7,7 @@ namespace nx {
 const game::Info game::kInfo = {
     "p4g",
     "Persona 4 Golden",
-    0x0000000000000000ull, // TODO: Title ID correto
+    0x010062B01525C000ull, // Persona 4 Golden
     "io.github.p4grecomp",
     "private/p4g",
     0,
