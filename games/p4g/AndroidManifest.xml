@@ -19,7 +19,7 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application
-        android:label="P5R"
+        android:label="Persona 4 Golden"
         android:requestLegacyExternalStorage="true"
         android:hasCode="true"
         android:extractNativeLibs="true"
@@ -63,7 +63,7 @@
             android:screenOrientation="sensorLandscape"
             android:resizeableActivity="false"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density">
-            <meta-data android:name="android.app.lib_name" android:value="p5r" />
+            <meta-data android:name="android.app.lib_name" android:value="p4g" />
         </activity>
     </application>
 </manifest>
