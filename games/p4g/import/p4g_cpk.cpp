@@ -45,7 +45,9 @@ bool read_utf_string(
     }
 
     result.assign(
-        reinterpret_cast<const char*>(data.data() + start),
+        reinterpret_cast<const char*>(
+            data.data() + start
+        ),
         end - start
     );
 
@@ -94,7 +96,6 @@ bool prepare_utf_table(
         return false;
     }
 
-    // Offsets relativos a base 8 do formato @UTF.
     constexpr uint64_t base = 8;
 
     uint64_t rows =
@@ -166,7 +167,6 @@ size_t utf_value_size(int type) {
     }
 }
 
-// Identificar as colunas @UTF.
 struct UtfColumn {
     std::string name;
     int storage = 0;
@@ -243,6 +243,7 @@ bool read_utf_columns(
 
             col.constant_offset = pos;
             pos += size;
+
         } else if (col.storage != 0x10 &&
                    col.storage != 0x50) {
             error = "CPK: armazenamento UTF desconhecido";
@@ -250,6 +251,70 @@ bool read_utf_columns(
         }
 
         columns.push_back(col);
+    }
+
+    return true;
+}
+
+// Ler valores inteiros das colunas UTF.
+bool read_utf_integer(
+    const std::vector<uint8_t>& data,
+    size_t pos,
+    int type,
+    uint64_t& value
+) {
+    value = 0;
+
+    size_t size = 0;
+
+    switch (type) {
+        case 0:
+        case 1:
+            size = 1;
+            break;
+
+        case 2:
+        case 3:
+            size = 2;
+            break;
+
+        case 4:
+        case 5:
+            size = 4;
+            break;
+
+        case 6:
+        case 7:
+            size = 8;
+            break;
+
+        default:
+            return false;
+    }
+
+    if (pos > data.size() ||
+        size > data.size() - pos) {
+        return false;
+    }
+
+    const uint8_t* p = data.data() + pos;
+
+    switch (size) {
+        case 1:
+            value = p[0];
+            break;
+
+        case 2:
+            value = read_be16(p);
+            break;
+
+        case 4:
+            value = read_be32(p);
+            break;
+
+        case 8:
+            value = read_be64(p);
+            break;
     }
 
     return true;
@@ -297,8 +362,8 @@ bool read_cpk_block(
     const uint64_t size = read_le64(header + 8);
     const uint64_t start = offset + 16;
 
-    // Limite preventivo para tabelas de metadados.
-    constexpr uint64_t MAX_TABLE = 64ull * 1024 * 1024;
+    constexpr uint64_t MAX_TABLE =
+        64ull * 1024 * 1024;
 
     if (size == 0 ||
         size > MAX_TABLE ||
@@ -343,15 +408,14 @@ bool list_cpk_files(
         return false;
     }
 
-    // Validar a tabela @UTF do cabecalho CPK.
     if (!prepare_utf_table(header, error)) {
         return false;
     }
 
-    // Etapa 61.24: interpretar as colunas @UTF.
     std::vector<UtfColumn> columns;
 
-    if (!read_utf_columns(header, columns, error)) {
+    if (!read_utf_columns(
+            header, columns, error)) {
         return false;
     }
 
@@ -360,11 +424,102 @@ bool list_cpk_files(
         return false;
     }
 
+    // Etapa 61.26: ler a primeira linha UTF.
+    const size_t row_offset =
+        8ull + read_be16(header.data() + 10);
+
+    const size_t row_size =
+        read_be16(header.data() + 26);
+
+    const uint32_t row_count =
+        read_be32(header.data() + 28);
+
+    if (row_count == 0 ||
+        row_offset > header.size() ||
+        row_size > header.size() - row_offset) {
+        error = "CPK: primeira linha UTF invalida";
+        return false;
+    }
+
+    size_t pos = row_offset;
+    const size_t row_end = row_offset + row_size;
+
+    uint64_t toc = 0;
+    uint64_t content = 0;
+
+    bool has_toc = false;
+    bool has_content = false;
+
+    for (const auto& col : columns) {
+        const size_t n = utf_value_size(col.type);
+
+        if (n == 0) {
+            error = "CPK: tipo UTF desconhecido";
+            return false;
+        }
+
+        size_t value_pos = 0;
+
+        if (col.storage == 0x50) {
+            if (pos > row_end ||
+                n > row_end - pos) {
+                error = "CPK: valor UTF fora da linha";
+                return false;
+            }
+
+            value_pos = pos;
+            pos += n;
+
+        } else if (col.storage == 0x30) {
+            value_pos = col.constant_offset;
+
+        } else {
+            // Colunas sem valor armazenado.
+            continue;
+        }
+
+        if (col.name != "TocOffset" &&
+            col.name != "ContentOffset") {
+            continue;
+        }
+
+        uint64_t value = 0;
+
+        if (!read_utf_integer(
+                header,
+                value_pos,
+                col.type,
+                value)) {
+            error = "CPK: offset UTF invalido";
+            return false;
+        }
+
+        if (col.name == "TocOffset") {
+            toc = value;
+            has_toc = true;
+        } else {
+            content = value;
+            has_content = true;
+        }
+    }
+
+    if (!has_toc || !has_content) {
+        error = "CPK: colunas de offset ausentes";
+        return false;
+    }
+
+    if (toc >= cpk.size ||
+        content >= cpk.size) {
+        error = "CPK: offsets fora de data.cpk";
+        return false;
+    }
+
     // Diagnostico temporario.
-    error = "P4G: leitura UTF funcionando! "
-            "Colunas encontradas: " +
-            std::to_string(columns.size()) +
-            ". Indice TOC ainda pendente.";
+    error = "P4G: TocOffset=" +
+            std::to_string(toc) +
+            ", ContentOffset=" +
+            std::to_string(content) +
+            ". Leitura TOC pendente.";
 
     return false;
 }
