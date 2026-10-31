@@ -52,3 +52,7 @@ jobs:
             -DNX_GAME=p4g \
             -DNX_NCE=ON
 
+
+      - name: Build P4G native library
+        run: |
+          cmake --build build-p4g --target p4g -j 2
