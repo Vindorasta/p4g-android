@@ -1,0 +1,20 @@
+
+name: Persona 4 Golden Android
+
+on:
+  workflow_dispatch:
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify P4G files
+        run: |
+          test -f games/p4g/game.cpp
+          test -f games/p4g/AndroidManifest.xml
+          test -f games/p4g/import/p4g_import_jni.cpp
+          test -f games/p4g/import/p4g_shaders.cpp
+          echo "P4G source files found."
