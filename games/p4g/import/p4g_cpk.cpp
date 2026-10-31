@@ -551,18 +551,96 @@ bool list_cpk_files(
     const uint32_t file_count =
         read_be32(toc_data.data() + 28);
 
-    // Etapa 61.32: mostrar os nomes das colunas.
-    error = "P4G: TOC possui " +
-            std::to_string(file_count) +
-            " arquivos. Colunas: ";
+    // Etapa 61.34: ler o primeiro arquivo do TOC.
+    if (file_count == 0) {
+        error = "P4G: TOC vazio";
+        return false;
+    }
 
-    for (size_t i = 0; i < toc_columns.size(); ++i) {
-        if (i != 0) {
-            error += ", ";
+    const size_t toc_row_start =
+        8ull + read_be16(toc_data.data() + 10);
+
+    const size_t toc_row_size =
+        read_be16(toc_data.data() + 26);
+
+    const uint64_t strings_offset =
+        8ull + read_be32(toc_data.data() + 12);
+
+    if (toc_row_start > toc_data.size() ||
+        toc_row_size > toc_data.size() - toc_row_start) {
+        error = "P4G: primeira linha TOC invalida";
+        return false;
+    }
+
+    size_t cursor = toc_row_start;
+    const size_t toc_row_end = toc_row_start + toc_row_size;
+
+    std::string dir_name;
+    std::string file_name;
+
+    for (const auto& col : toc_columns) {
+        const size_t n = utf_value_size(col.type);
+
+        if (n == 0) {
+            error = "P4G: tipo de coluna desconhecido";
+            return false;
         }
 
-        error += toc_columns[i].name;
+        size_t value_pos = 0;
+
+        if (col.storage == 0x50) {
+            if (cursor > toc_row_end ||
+                n > toc_row_end - cursor) {
+                error = "P4G: linha TOC truncada";
+                return false;
+            }
+
+            value_pos = cursor;
+            cursor += n;
+
+        } else if (col.storage == 0x30) {
+            value_pos = col.constant_offset;
+
+        } else {
+            continue;
+        }
+
+        if (col.name != "DirName" &&
+            col.name != "FileName") {
+            continue;
+        }
+
+        if (col.type != 0xA ||
+            value_pos > toc_data.size() ||
+            4 > toc_data.size() - value_pos) {
+            error = "P4G: string TOC invalida";
+            return false;
+        }
+
+        const uint32_t str_offset =
+            read_be32(toc_data.data() + value_pos);
+
+        std::string value;
+
+        if (!read_utf_string(
+                toc_data,
+                strings_offset,
+                str_offset,
+                value)) {
+            error = "P4G: falha ao ler nome do TOC";
+            return false;
+        }
+
+        if (col.name == "DirName") {
+            dir_name = value;
+        } else {
+            file_name = value;
+        }
     }
+
+    error = "P4G: primeiro arquivo do TOC: " +
+            dir_name + "/" + file_name +
+            ". Leitura completa pendente.";
 
     return false;
 }
