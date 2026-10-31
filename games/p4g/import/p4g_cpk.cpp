@@ -390,6 +390,151 @@ bool read_cpk_block(
     return true;
 }
 
+
+// CRILAYLA: bitstream lido de tras para frente.
+// O formato guarda 0x100 bytes de cabecalho sem compressao.
+struct ReverseBits {
+    const std::vector<uint8_t>& data;
+    size_t next;
+    uint8_t pool = 0;
+    unsigned remaining = 0;
+
+    ReverseBits(const std::vector<uint8_t>& bytes, size_t end)
+        : data(bytes), next(end) {}
+
+    bool get(unsigned count, uint32_t& value) {
+        value = 0;
+        for (unsigned i = 0; i < count; ++i) {
+            if (remaining == 0) {
+                if (next <= 16) return false;
+                pool = data[--next];
+                remaining = 8;
+            }
+            value = (value << 1) | ((pool >> (remaining - 1)) & 1u);
+            --remaining;
+        }
+        return true;
+    }
+};
+
+uint32_t read_le32(const uint8_t* p) {
+    return uint32_t(p[0]) |
+           (uint32_t(p[1]) << 8) |
+           (uint32_t(p[2]) << 16) |
+           (uint32_t(p[3]) << 24);
+}
+
+// Limitar memoria consumida por arquivos fornecidos pelo usuario.
+constexpr uint64_t MAX_SHADER_BYTES = 128ull * 1024 * 1024;
+
+bool unpack_crilayla(
+    const std::vector<uint8_t>& input,
+    uint64_t expected_size,
+    std::vector<uint8_t>& output,
+    std::string& error
+) {
+    output.clear();
+    if (input.size() < 0x110 ||
+        std::memcmp(input.data(), "CRILAYLA", 8) != 0) {
+        error = "P4G: cabecalho CRILAYLA ausente";
+        return false;
+    }
+
+    const uint64_t unpacked_body = read_le32(input.data() + 8);
+    const uint64_t compressed_body = read_le32(input.data() + 12);
+    const uint64_t total = unpacked_body + 0x100;
+    if (total != expected_size || total > MAX_SHADER_BYTES ||
+        compressed_body > input.size() - 0x110 ||
+        compressed_body + 0x110 != input.size()) {
+        error = "P4G: tamanhos CRILAYLA inconsistentes";
+        return false;
+    }
+
+    output.resize(static_cast<size_t>(total));
+    const size_t header_start = static_cast<size_t>(16 + compressed_body);
+    std::memcpy(output.data(), input.data() + header_start, 0x100);
+
+    ReverseBits bits(input, header_start);
+    size_t write = output.size();
+    const unsigned widths[] = {2, 3, 5, 8};
+
+    while (write > 0x100) {
+        uint32_t flag = 0;
+        if (!bits.get(1, flag)) {
+            error = "P4G: fluxo CRILAYLA truncado";
+            return false;
+        }
+        if (!flag) {
+            uint32_t literal = 0;
+            if (!bits.get(8, literal)) {
+                error = "P4G: literal CRILAYLA truncado";
+                return false;
+            }
+            output[--write] = static_cast<uint8_t>(literal);
+            continue;
+        }
+
+        uint32_t distance_bits = 0;
+        if (!bits.get(13, distance_bits)) {
+            error = "P4G: referencia CRILAYLA truncada";
+            return false;
+        }
+        const size_t distance = static_cast<size_t>(distance_bits) + 3;
+        uint64_t length = 3;
+        bool extend = true;
+        for (unsigned width : widths) {
+            uint32_t part = 0;
+            if (!bits.get(width, part)) {
+                error = "P4G: comprimento CRILAYLA truncado";
+                return false;
+            }
+            length += part;
+            if (part != ((1u << width) - 1u)) {
+                extend = false;
+                break;
+            }
+        }
+        if (extend) {
+            uint32_t part = 0;
+            do {
+                if (!bits.get(8, part)) {
+                    error = "P4G: extensao CRILAYLA truncada";
+                    return false;
+                }
+                length += part;
+                if (length > output.size()) {
+                    error = "P4G: comprimento CRILAYLA invalido";
+                    return false;
+                }
+            } while (part == 255);
+        }
+
+        if (length > write - 0x100 ||
+            distance > output.size() - write) {
+            error = "P4G: referencia CRILAYLA fora dos limites";
+            return false;
+        }
+        for (uint64_t j = 0; j < length; ++j) {
+            const size_t dest = --write;
+            const size_t source = dest + distance;
+            if (source >= output.size()) {
+                error = "P4G: origem CRILAYLA invalida";
+                return false;
+            }
+            output[dest] = output[source];
+        }
+    }
+    return true;
+}
+
+size_t count_gxp_markers(const std::vector<uint8_t>& bytes) {
+    size_t count = 0;
+    for (size_t i = 0; i + 3 <= bytes.size(); ++i) {
+        if (std::memcmp(bytes.data() + i, "GXP", 3) == 0) ++count;
+    }
+    return count;
+}
+
 } // namespace
 
 bool list_cpk_files(
@@ -589,7 +734,11 @@ bool list_cpk_files(
     size_t found_count = 0;
     size_t checked_count = 0;
     size_t compressed_count = 0;
+    size_t crilayla_count = 0;
+    size_t unpacked_count = 0;
+    size_t gxp_count = 0;
     std::string first_file;
+    std::string detail;
 
     for (uint32_t row = 0; row < file_count; ++row) {
         const size_t row_start = static_cast<size_t>(
@@ -707,29 +856,68 @@ bool list_cpk_files(
             return false;
         }
 
-        // Leitura binaria de amostra, sem descomprimir nem salvar arquivos.
-        uint8_t sample[16] = {};
-        const uint64_t sample_size = (file_size < sizeof(sample))
-            ? file_size : sizeof(sample);
-        if (sample_size == 0 ||
-            game.read(cpk, file_base + file_offset,
-                      sample, sample_size) != sample_size) {
-            error = "P4G: falha na leitura binaria: " + file_name;
+        // Ler os dados completos apenas dos seis pacotes procurados.
+        if (file_size == 0 || file_size > MAX_SHADER_BYTES ||
+            extract_size == 0 || extract_size > MAX_SHADER_BYTES) {
+            error = "P4G: pacote grande demais ou vazio: " + file_name;
+            return false;
+        }
+        std::vector<uint8_t> packed(static_cast<size_t>(file_size));
+        if (game.read(cpk, file_base + file_offset,
+                      packed.data(), file_size) != file_size) {
+            error = "P4G: falha ao ler pacote: " + file_name;
             return false;
         }
 
         found[target] = true;
         ++found_count;
         ++checked_count;
-        if (extract_size > file_size) {
-            ++compressed_count;
+        const bool compressed = extract_size > file_size;
+        if (compressed) ++compressed_count;
+
+        const bool is_crilayla = packed.size() >= 8 &&
+            std::memcmp(packed.data(), "CRILAYLA", 8) == 0;
+        if (is_crilayla) ++crilayla_count;
+        if (compressed && !is_crilayla) {
+            error = "P4G: compressao desconhecida: " + file_name;
+            return false;
         }
+        if (!compressed && extract_size != file_size) {
+            error = "P4G: tamanhos inconsistentes: " + file_name;
+            return false;
+        }
+
+        std::vector<uint8_t> unpacked;
+        if (compressed) {
+            if (!unpack_crilayla(packed, extract_size, unpacked, error)) {
+                error += " (" + file_name + ")";
+                return false;
+            }
+        } else {
+            unpacked.swap(packed);
+        }
+        if (unpacked.size() != extract_size) {
+            error = "P4G: tamanho descomprimido invalido: " + file_name;
+            return false;
+        }
+        ++unpacked_count;
+        const size_t markers = count_gxp_markers(unpacked);
+        gxp_count += markers;
+        if (detail.size() < 240) {
+            if (!detail.empty()) detail += ", ";
+            detail += file_name;
+            detail += "(GXP=" + std::to_string(markers) + ")";
+        }
+
     }
 
     error = "P4G: TOC=" + std::to_string(file_count) +
             ", shaders=" + std::to_string(found_count) + "/6" +
             ", leitura=" + std::to_string(checked_count) + "/6" +
-            ", comprimidos=" + std::to_string(compressed_count) + ".";
+            ", comprimidos=" + std::to_string(compressed_count) +
+            ", CRILAYLA=" + std::to_string(crilayla_count) +
+            ", descomprimidos=" + std::to_string(unpacked_count) + "/6" +
+            ", marcadores GXP=" + std::to_string(gxp_count) + ".";
     if (found_count != target_count) {
         error += " Ausentes:";
         for (size_t i = 0; i < target_count; ++i) {
@@ -738,10 +926,10 @@ bool list_cpk_files(
                 error += targets[i];
             }
         }
-        error += ". Primeiro: " + first_file;
     } else {
-        error += " Extracao/descompressao ainda pendente.";
+        error += " Validacao de formato GXP e gravacao pendentes.";
     }
+
     // Continua retornando false: o importador de shaders ainda nao
     // esta implementado. Este passo e apenas um diagnostico.
     return false;
