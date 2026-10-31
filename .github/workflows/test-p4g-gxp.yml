@@ -1,0 +1,29 @@
+
+name: Test P4G GXP Extractor
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'games/p4g/import/p4g_gxp.h'
+      - 'games/p4g/import/p4g_gxp_test.cpp'
+      - '.github/workflows/test-p4g-gxp.yml'
+
+jobs:
+  test-gxp:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compile GXP extractor
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            games/p4g/import/p4g_gxp_test.cpp \
+            -o p4g_gxp_test
+
+      - name: Verify executable
+        run: |
+          test -x ./p4g_gxp_test
+          echo "GXP extractor compiled successfully"
