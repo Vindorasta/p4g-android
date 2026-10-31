@@ -7,6 +7,7 @@ on:
     paths:
       - 'games/p4g/import/p4g_gxp.h'
       - 'games/p4g/import/p4g_gxp_test.cpp'
+      - 'games/p4g/tests/**'
       - '.github/workflows/test-p4g-gxp.yml'
 
 jobs:
@@ -28,7 +29,6 @@ jobs:
           test -x ./p4g_gxp_test
           echo "GXP extractor compiled successfully"
 
-          
       - name: Test GXP parser
         run: |
           python3 - <<'PY'
@@ -68,31 +68,30 @@ jobs:
 
           echo "GXP parser test passed!"
 
-
       - name: Test corrupted GXP files
         run: |
           python3 - <<'PY'
           import struct
 
-          original = bytearray(open("test_gxp.bin", "rb").read())
+          original = bytearray(
+              open("test_gxp.bin", "rb").read()
+          )
 
-          # Primeiro registro:
-          # cabecalho externo de 40 bytes
-          # nome de 32 bytes + tamanho de 4 bytes
           gxp_start = 40 + 36
 
-          # Assinatura incorreta
           broken = original.copy()
           broken[gxp_start:gxp_start + 4] = b"BAD!"
           open("bad_magic.bin", "wb").write(broken)
 
-          # Tamanho interno inconsistente
           broken = original.copy()
-          struct.pack_into("<I", broken, gxp_start + 8, 9999)
+          struct.pack_into(
+              "<I", broken, gxp_start + 8, 9999
+          )
           open("bad_size.bin", "wb").write(broken)
 
-          # Segundo registro incompleto
-          open("truncated.bin", "wb").write(original[:-20])
+          open("truncated.bin", "wb").write(
+              original[:-20]
+          )
           PY
 
           for file in bad_magic.bin bad_size.bin truncated.bin; do
@@ -105,3 +104,61 @@ jobs:
           done
 
           echo "All corrupted GXP tests passed!"
+
+      - name: Inspect real P4G GXP sample
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+
+          path = Path(
+              "games/p4g/tests/"
+              "V00000000_00000000.gxp"
+          )
+
+          if not path.is_file():
+              raise SystemExit(
+                  "Real GXP sample missing. "
+                  "Upload V00000000_00000000.gxp "
+                  "to games/p4g/tests/"
+              )
+
+          data = path.read_bytes()
+
+          if len(data) < 12:
+              raise SystemExit("GXP header truncated")
+
+          if data[:4] != b"GXP\x00":
+              raise SystemExit("Invalid GXP magic")
+
+          version, declared_size = struct.unpack_from(
+              "<II", data, 4
+          )
+
+          if declared_size != len(data):
+              raise SystemExit(
+                  "Declared size does not match file"
+              )
+
+          print("Real GXP header validated")
+          print("File:", path)
+          print("Size:", len(data))
+          print("Version field:", hex(version))
+          print("Header (first 96 bytes):")
+          print(data[:96].hex(" "))
+
+          Path("real-gxp-report.txt").write_text(
+              f"File: {path.name}\n"
+              f"Size: {len(data)} bytes\n"
+              f"Version field: 0x{version:08X}\n"
+              f"Header: {data[:96].hex(' ')}\n",
+              encoding="utf-8"
+          )
+          PY
+
+      - name: Upload real GXP report
+        uses: actions/upload-artifact@v4
+        with:
+          name: p4g-real-gxp-report
+          path: real-gxp-report.txt
+          if-no-files-found: error
