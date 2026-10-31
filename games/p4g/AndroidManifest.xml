@@ -5,7 +5,7 @@
      all-files access. The native build (NX_NCE, build_android.cmd -Nce) holds no game code: it runs exefs/ as it is.
      The recompiled build (analysis/ and the game's code compiled in) is private to the owner of the game. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="io.github.p5rrecomp"
+    package="io.github.p4grecomp"
     android:versionCode="8"
     android:versionName="0.5.0">
 
