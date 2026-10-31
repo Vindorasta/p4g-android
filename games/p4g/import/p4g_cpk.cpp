@@ -1,5 +1,6 @@
 
 #include "p4g_cpk.h"
+#include "p4g_gxp.h"
 
 #include <cstring>
 #include <limits>
@@ -527,13 +528,6 @@ bool unpack_crilayla(
     return true;
 }
 
-size_t count_gxp_markers(const std::vector<uint8_t>& bytes) {
-    size_t count = 0;
-    for (size_t i = 0; i + 3 <= bytes.size(); ++i) {
-        if (std::memcmp(bytes.data() + i, "GXP", 3) == 0) ++count;
-    }
-    return count;
-}
 
 } // namespace
 
@@ -733,10 +727,11 @@ bool list_cpk_files(
     bool found[target_count] = {};
     size_t found_count = 0;
     size_t checked_count = 0;
-    size_t compressed_count = 0;
     size_t crilayla_count = 0;
     size_t unpacked_count = 0;
     size_t gxp_count = 0;
+    size_t validated_packs = 0;
+    size_t invalid_records = 0;
     std::string first_file;
     std::string detail;
 
@@ -873,7 +868,6 @@ bool list_cpk_files(
         ++found_count;
         ++checked_count;
         const bool compressed = extract_size > file_size;
-        if (compressed) ++compressed_count;
 
         const bool is_crilayla = packed.size() >= 8 &&
             std::memcmp(packed.data(), "CRILAYLA", 8) == 0;
@@ -901,23 +895,51 @@ bool list_cpk_files(
             return false;
         }
         ++unpacked_count;
-        const size_t markers = count_gxp_markers(unpacked);
-        gxp_count += markers;
-        if (detail.size() < 240) {
-            if (!detail.empty()) detail += ", ";
-            detail += file_name;
-            detail += "(GXP=" + std::to_string(markers) + ")";
+        // Validar os registros usando o parser GXP existente.
+        std::vector<GxpRecord> records;
+        std::string parse_error;
+        if (!parseGxp(unpacked, records, parse_error)) {
+            error = "P4G: GXP invalido em " + file_name +
+                    ": " + parse_error;
+            return false;
         }
+        if (records.empty()) {
+            error = "P4G: nenhum programa GXP em " + file_name;
+            return false;
+        }
+
+        // Confirmar que os registros possuem limites validos e o tipo
+        // de shader esperado pelo nome do pacote (F=fragment, V=vertex).
+        const char expected_stage = file_name[11]; // output_cnv_[f/v]...
+        for (const GxpRecord& rec : records) {
+            if (rec.name.empty() ||
+                rec.name[0] != static_cast<char>(
+                    (expected_stage == 'v') ? 'V' : 'F') ||
+                rec.offset > unpacked.size() ||
+                rec.size > unpacked.size() - rec.offset) {
+                ++invalid_records;
+            }
+        }
+        if (invalid_records != 0) {
+            error = "P4G: programa GXP fora dos limites ou tipo "
+                    "inesperado em " + file_name;
+            return false;
+        }
+        ++validated_packs;
+        gxp_count += records.size();
+        if (!detail.empty()) detail += ", ";
+        detail += file_name + "=" + std::to_string(records.size());
 
     }
 
     error = "P4G: TOC=" + std::to_string(file_count) +
-            ", shaders=" + std::to_string(found_count) + "/6" +
-            ", leitura=" + std::to_string(checked_count) + "/6" +
-            ", comprimidos=" + std::to_string(compressed_count) +
+            ", pacotes=" + std::to_string(found_count) + "/6" +
+            ", lidos=" + std::to_string(checked_count) + "/6" +
             ", CRILAYLA=" + std::to_string(crilayla_count) +
             ", descomprimidos=" + std::to_string(unpacked_count) + "/6" +
-            ", marcadores GXP=" + std::to_string(gxp_count) + ".";
+            ", GXP validados=" + std::to_string(validated_packs) + "/6" +
+            ", programas=" + std::to_string(gxp_count) +
+            ", invalidos=" + std::to_string(invalid_records) + ".";
     if (found_count != target_count) {
         error += " Ausentes:";
         for (size_t i = 0; i < target_count; ++i) {
@@ -927,7 +949,7 @@ bool list_cpk_files(
             }
         }
     } else {
-        error += " Validacao de formato GXP e gravacao pendentes.";
+        error += " Pacotes: " + detail + ". Gravacao e integracao pendentes.";
     }
 
     // Continua retornando false: o importador de shaders ainda nao
