@@ -1,4 +1,4 @@
-package io.github.p5rrecomp;
+package io.github.p4grecomp;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -72,7 +72,7 @@ import java.util.Map;
  * Spanish, English, French, German, Italian, Portuguese, Japanese, Korean, Chinese; English otherwise).
  */
 public class Launcher extends Activity {
-    static final String DATA = "Persona 5 Royal";
+    static final String DATA = "Persona 4 Golden";
 
     static final class Option {
         final String key, es, en;
