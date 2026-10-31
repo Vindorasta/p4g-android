@@ -285,6 +285,7 @@ if(ANDROID AND NX_GAME STREQUAL "p4g")
     add_library(p4gimport SHARED
         games/p4g/import/p4g_import_jni.cpp
         games/p4g/import/p4g_shaders.cpp
+        games/p4g/import/p4g_cpk.cpp
         "${NX_IMPORTER_DIR}/nximport.cpp"
         "${NX_IMPORTER_DIR}/nxcrypto.cpp"
     )
