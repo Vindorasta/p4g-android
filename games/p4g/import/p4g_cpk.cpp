@@ -514,7 +514,7 @@ bool list_cpk_files(
         return false;
     }
 
-    // Etapa 61.28: ler o indice TOC.
+    // Ler o indice TOC.
     std::vector<uint8_t> toc_data;
 
     if (!read_cpk_block(
@@ -532,11 +532,31 @@ bool list_cpk_files(
         return false;
     }
 
+    // Etapa 61.30: identificar as colunas do TOC.
+    std::vector<UtfColumn> toc_columns;
+
+    if (!read_utf_columns(
+            toc_data,
+            toc_columns,
+            error)) {
+        return false;
+    }
+
+    if (toc_columns.empty()) {
+        error = "P4G: nenhuma coluna encontrada no TOC";
+        return false;
+    }
+
+    const uint32_t file_count =
+        read_be32(toc_data.data() + 28);
+
     // Diagnostico temporario.
-    error = "P4G: indice TOC encontrado! "
-            "Tabela UTF valida. Tamanho: " +
-            std::to_string(toc_data.size()) +
-            " bytes. Leitura de arquivos pendente.";
+    error = "P4G: TOC reconhecido! "
+            "Colunas: " +
+            std::to_string(toc_columns.size()) +
+            ", linhas: " +
+            std::to_string(file_count) +
+            ". Extracao pendente.";
 
     return false;
 }
