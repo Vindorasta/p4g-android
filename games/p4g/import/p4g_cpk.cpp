@@ -726,14 +726,6 @@ bool list_cpk_files(
     constexpr size_t target_count = sizeof(targets) / sizeof(targets[0]);
     bool found[target_count] = {};
     size_t found_count = 0;
-    size_t checked_count = 0;
-    size_t crilayla_count = 0;
-    size_t unpacked_count = 0;
-    size_t gxp_count = 0;
-    size_t validated_packs = 0;
-    size_t invalid_records = 0;
-    std::string first_file;
-    std::string detail;
 
     for (uint32_t row = 0; row < file_count; ++row) {
         const size_t row_start = static_cast<size_t>(
@@ -820,10 +812,6 @@ bool list_cpk_files(
             }
         }
 
-        if (row == 0) {
-            first_file = dir_name + "/" + file_name;
-        }
-
         // Para este teste, apenas os seis pacotes de shader sao lidos.
         if (!has_name) {
             continue;
@@ -851,110 +839,82 @@ bool list_cpk_files(
             return false;
         }
 
-        // Ler os dados completos apenas dos seis pacotes procurados.
         if (file_size == 0 || file_size > MAX_SHADER_BYTES ||
             extract_size == 0 || extract_size > MAX_SHADER_BYTES) {
-            error = "P4G: pacote grande demais ou vazio: " + file_name;
-            return false;
-        }
-        std::vector<uint8_t> packed(static_cast<size_t>(file_size));
-        if (game.read(cpk, file_base + file_offset,
-                      packed.data(), file_size) != file_size) {
-            error = "P4G: falha ao ler pacote: " + file_name;
+            error = "P4G: tamanho invalido: " + file_name;
             return false;
         }
 
+        CpkFile file;
+        file.path = "shader/" + file_name;
+        file.offset = file_base + file_offset;
+        file.size = file_size;
+        file.extract_size = extract_size;
+        files.push_back(file);
         found[target] = true;
         ++found_count;
-        ++checked_count;
-        const bool compressed = extract_size > file_size;
-
-        const bool is_crilayla = packed.size() >= 8 &&
-            std::memcmp(packed.data(), "CRILAYLA", 8) == 0;
-        if (is_crilayla) ++crilayla_count;
-        if (compressed && !is_crilayla) {
-            error = "P4G: compressao desconhecida: " + file_name;
-            return false;
-        }
-        if (!compressed && extract_size != file_size) {
-            error = "P4G: tamanhos inconsistentes: " + file_name;
-            return false;
-        }
-
-        std::vector<uint8_t> unpacked;
-        if (compressed) {
-            if (!unpack_crilayla(packed, extract_size, unpacked, error)) {
-                error += " (" + file_name + ")";
-                return false;
-            }
-        } else {
-            unpacked.swap(packed);
-        }
-        if (unpacked.size() != extract_size) {
-            error = "P4G: tamanho descomprimido invalido: " + file_name;
-            return false;
-        }
-        ++unpacked_count;
-        // Validar os registros usando o parser GXP existente.
-        std::vector<GxpRecord> records;
-        std::string parse_error;
-        if (!parseGxp(unpacked, records, parse_error)) {
-            error = "P4G: GXP invalido em " + file_name +
-                    ": " + parse_error;
-            return false;
-        }
-        if (records.empty()) {
-            error = "P4G: nenhum programa GXP em " + file_name;
-            return false;
-        }
-
-        // Confirmar que os registros possuem limites validos e o tipo
-        // de shader esperado pelo nome do pacote (F=fragment, V=vertex).
-        const char expected_stage = file_name[11]; // output_cnv_[f/v]...
-        for (const GxpRecord& rec : records) {
-            if (rec.name.empty() ||
-                rec.name[0] != static_cast<char>(
-                    (expected_stage == 'v') ? 'V' : 'F') ||
-                rec.offset > unpacked.size() ||
-                rec.size > unpacked.size() - rec.offset) {
-                ++invalid_records;
-            }
-        }
-        if (invalid_records != 0) {
-            error = "P4G: programa GXP fora dos limites ou tipo "
-                    "inesperado em " + file_name;
-            return false;
-        }
-        ++validated_packs;
-        gxp_count += records.size();
-        if (!detail.empty()) detail += ", ";
-        detail += file_name + "=" + std::to_string(records.size());
-
     }
 
-    error = "P4G: TOC=" + std::to_string(file_count) +
-            ", pacotes=" + std::to_string(found_count) + "/6" +
-            ", lidos=" + std::to_string(checked_count) + "/6" +
-            ", CRILAYLA=" + std::to_string(crilayla_count) +
-            ", descomprimidos=" + std::to_string(unpacked_count) + "/6" +
-            ", GXP validados=" + std::to_string(validated_packs) + "/6" +
-            ", programas=" + std::to_string(gxp_count) +
-            ", invalidos=" + std::to_string(invalid_records) + ".";
     if (found_count != target_count) {
-        error += " Ausentes:";
+        error = "P4G: shaders encontrados " +
+                std::to_string(found_count) + "/6. Ausentes:";
         for (size_t i = 0; i < target_count; ++i) {
             if (!found[i]) {
                 error += " ";
                 error += targets[i];
             }
         }
-    } else {
-        error += " Pacotes: " + detail + ". Gravacao e integracao pendentes.";
+        files.clear();
+        return false;
     }
 
-    // Continua retornando false: o importador de shaders ainda nao
-    // esta implementado. Este passo e apenas um diagnostico.
-    return false;
+    error.clear();
+    return true;
+}
+
+// Le o pacote completo e faz descompressao, um arquivo por vez.
+bool read_cpk_file(
+    const nxi::GameImage& game,
+    const nxi::GameImage::Entry& cpk,
+    const CpkFile& file,
+    std::vector<uint8_t>& output,
+    std::string& error
+) {
+    output.clear();
+    error.clear();
+    if (file.size == 0 || file.extract_size == 0 ||
+        file.size > MAX_SHADER_BYTES ||
+        file.extract_size > MAX_SHADER_BYTES ||
+        file.offset > cpk.size ||
+        file.size > cpk.size - file.offset) {
+        error = "P4G: tamanho/offset invalido: " + file.path;
+        return false;
+    }
+
+    std::vector<uint8_t> packed(static_cast<size_t>(file.size));
+    if (game.read(cpk, file.offset, packed.data(), file.size) != file.size) {
+        error = "P4G: falha ao ler " + file.path;
+        return false;
+    }
+
+    if (file.extract_size > file.size) {
+        if (!unpack_crilayla(packed, file.extract_size, output, error)) {
+            error += " (" + file.path + ")";
+            return false;
+        }
+    } else if (file.extract_size == file.size) {
+        output.swap(packed);
+    } else {
+        error = "P4G: tamanhos inconsistentes: " + file.path;
+        return false;
+    }
+
+    if (output.size() != file.extract_size) {
+        output.clear();
+        error = "P4G: tamanho descomprimido invalido: " + file.path;
+        return false;
+    }
+    return true;
 }
 
 } // namespace p4g
