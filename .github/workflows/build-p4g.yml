@@ -18,3 +18,21 @@ jobs:
           test -f games/p4g/import/p4g_import_jni.cpp
           test -f games/p4g/import/p4g_shaders.cpp
           echo "P4G source files found."
+
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: |
+          sdkmanager --install \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;28.2.13676358"
+
+      - name: Verify Android tools
+        run: |
+          cmake --version
+          ninja --version
+          test -d "$ANDROID_HOME/ndk/28.2.13676358"
+          echo "Android build environment ready"
