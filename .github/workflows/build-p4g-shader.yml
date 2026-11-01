@@ -7,7 +7,7 @@ on:
 jobs:
   build-shader:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Checkout P4G
@@ -20,6 +20,8 @@ jobs:
 
       - name: Download Vita3K
         run: |
+          set -e
+
           git clone --depth 1 \
             https://github.com/Vita3K/Vita3K.git \
             vita3k-source
@@ -29,7 +31,10 @@ jobs:
 
       - name: Install compiler dependencies
         run: |
+          set -e
+
           sudo apt-get update
+
           sudo apt-get install -y \
             libboost-dev \
             libspdlog-dev \
@@ -49,8 +54,6 @@ jobs:
             fi
           done
 
-
-
       - name: Prepare Vita3K SPIR-V dependencies
         run: |
           set -e
@@ -66,9 +69,7 @@ jobs:
           test -f \
             vita3k-source/external/SPIRV-Cross/spirv_glsl.hpp
 
-          echo "Vita3K glslang and SPIRV-Cross ready"
-
-
+          echo "Vita3K dependencies ready"
 
       - name: Compile all Vita3K shader sources
         shell: bash
@@ -83,9 +84,8 @@ jobs:
 
           test -x "$CXX"
 
-          cat > "$OUT/results.tsv" <<'EOF'
-          source	status
-          EOF
+          printf 'source\tstatus\n' \
+            > "$OUT/results.tsv"
 
           SUCCESS=0
           FAILED=0
@@ -142,17 +142,17 @@ jobs:
                 >> "$OUT/results.tsv"
               FAILED=$((FAILED + 1))
 
-              grep -m 3 -E \
+              grep -m 5 -E \
                 'fatal error:|error:' \
-                "$log" || tail -n 10 "$log"
+                "$log" || tail -n 15 "$log"
             fi
 
             echo "::endgroup::"
           done
 
           {
-            echo "P4G shader ARM64 batch build"
-            echo "Vita3K commit:"
+            echo "P4G shader ARM64 compilation"
+            echo "Vita3K revision:"
             cat vita3k-commit.txt
             echo
             echo "Compiled: $SUCCESS"
@@ -160,15 +160,18 @@ jobs:
             echo "Total: ${#SOURCES[@]}"
           } | tee "$OUT/summary.txt"
 
-          echo "success=$SUCCESS" >> "$GITHUB_OUTPUT"
-          echo "failed=$FAILED" >> "$GITHUB_OUTPUT"
-
-          # Falhas nao interrompem a coleta dos logs.
-          # A etapa final determina o resultado.
-
       - name: Verify ARM64 objects
         shell: bash
         run: |
+          set -e
+
+          test -d build-shader/objects
+
+          COUNT=$(find build-shader/objects \
+            -type f -name "*.o" | wc -l)
+
+          echo "Object files: $COUNT"
+
           find build-shader/objects \
             -type f -name "*.o" \
             -exec file {} \; \
@@ -176,37 +179,133 @@ jobs:
 
           cat build-shader/object-types.txt
 
-          if grep -qv 'Aarch64' \
-            build-shader/object-types.txt &&
-            [ -s build-shader/object-types.txt ]; then
-            echo "Verify ARM64 object architecture."
+          if [ "$COUNT" -ne 15 ]; then
+            echo "Expected 15 ARM64 object files."
+            exit 1
           fi
+
+          if grep -viq 'aarch64' \
+            build-shader/object-types.txt; then
+            echo "Object architecture mismatch."
+            exit 1
+          fi
+
+      # Nova etapa:
+      # Tenta vincular os componentes em uma biblioteca
+      # Android ARM64 sem permitir simbolos indefinidos.
+      - name: Link Vita3K shader library
+        shell: bash
+        run: |
+          set -u
+
+          NDK="$ANDROID_HOME/ndk/28.2.13676358"
+
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          CXX="$TOOLCHAIN/aarch64-linux-android29-clang++"
+          NM="$TOOLCHAIN/llvm-nm"
+          READELF="$TOOLCHAIN/llvm-readelf"
+
+          OUT="build-shader"
+          LIB="$OUT/libp4gshader.so"
+
+          echo "Collecting unresolved symbols..."
+
+          "$NM" -C -u "$OUT"/objects/*.o \
+            > "$OUT/logs/undefined-symbols.txt" \
+            2>&1 || true
+
+          echo "Attempting strict Android ARM64 linking..."
+
+          set +e
+
+          "$CXX" \
+            -shared \
+            -Wl,--no-undefined \
+            -Wl,-z,max-page-size=16384 \
+            -o "$LIB" \
+            "$OUT"/objects/*.o \
+            -llog \
+            -ldl \
+            > "$OUT/logs/link.log" 2>&1
+
+          RC=$?
+
+          set -e
+
+          echo "$RC" > "$OUT/logs/link-exit-code.txt"
+
+          if [ "$RC" -ne 0 ]; then
+            echo "Linking failed: missing native dependencies."
+            echo "First linker diagnostics:"
+
+            grep -m 40 -E \
+              'undefined symbol:|undefined reference|error:' \
+              "$OUT/logs/link.log" \
+              || tail -n 50 "$OUT/logs/link.log"
+
+            exit 1
+          fi
+
+          test -s "$LIB"
+
+          file "$LIB"
+
+          "$READELF" -h "$LIB" \
+            > "$OUT/logs/library-elf.txt"
+
+          "$READELF" -d "$LIB" \
+            > "$OUT/logs/library-dependencies.txt"
+
+          "$NM" -D --defined-only "$LIB" \
+            > "$OUT/logs/exported-symbols.txt"
+
+          echo "Android shared library linked successfully."
+
+      - name: Verify shader library
+        shell: bash
+        run: |
+          set -e
+
+          LIB="build-shader/libp4gshader.so"
+
+          test -s "$LIB"
+
+          NDK="$ANDROID_HOME/ndk/28.2.13676358"
+          READELF="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+
+          "$READELF" -h "$LIB" | grep -q AArch64
+
+          echo "ARM64 library verified."
+          echo "Important: GXP translation API still needs integration."
 
       - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: p4g-shader-arm64-batch
+          name: p4g-shader-arm64-link-diagnostics
           path: |
             build-shader/summary.txt
             build-shader/results.tsv
             build-shader/logs/
-            build-shader/objects/
             build-shader/object-types.txt
+            build-shader/libp4gshader.so
             vita3k-commit.txt
           if-no-files-found: warn
 
-      - name: Check compilation result
+      - name: Check final result
         shell: bash
         run: |
-          echo "Compilation results:"
-          cat build-shader/results.tsv
+          set -e
 
           if grep -q $'\tFAIL' \
             build-shader/results.tsv; then
-            echo "Some Vita3K components still need dependencies."
+            echo "Some shader components did not compile."
             exit 1
           fi
 
-          echo "All 15 shader source files compiled."
-          echo "Linking into an Android shared library is next."
+          test -s build-shader/libp4gshader.so
+
+          echo "All 15 objects compiled."
+          echo "Android ARM64 shared library linked."
+          echo "Next: translation API and Android integration."
