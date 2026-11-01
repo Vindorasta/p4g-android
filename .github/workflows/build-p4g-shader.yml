@@ -385,6 +385,61 @@ jobs:
           echo "SDL3 ARM64 static library built."
           echo "SDL3 library: $SDL_LIB"
 
+
+      - name: Build P4G shader C interface
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUT="build-shader"
+          NDK="$ANDROID_HOME/ndk/28.2.13676358"
+          CXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++"
+
+          cat > "$OUT/p4g_shader_api.cpp" <<'EOF'
+          #include <shader/spirv_recompiler.h>
+          #include <string>
+
+          extern "C" int p4g_shader_api_version() {
+              return 1;
+          }
+
+          extern "C" int p4g_shader_test_file(const char* path) {
+              if (!path || !*path)
+                  return -1;
+
+              try {
+                  shader::convert_gxp_to_glsl_from_filepath(
+                      std::string(path)
+                  );
+                  return 0;
+              } catch (...) {
+                  return -2;
+              }
+          }
+          EOF
+
+          "$CXX" \
+            -std=c++23 \
+            -fexceptions \
+            -O2 \
+            -fPIC \
+            -I vita3k-source/vita3k/shader/include \
+            -I vita3k-source/vita3k/gxm/include \
+            -I vita3k-source/vita3k/features/include \
+            -I vita3k-source/vita3k/util/include \
+            -I vita3k-source/external/glslang \
+            -I vita3k-source/external/SPIRV-Cross \
+            -I "$OUT/third_party" \
+            -c "$OUT/p4g_shader_api.cpp" \
+            -o "$OUT/objects/p4g_shader_api.o" \
+            > "$OUT/logs/p4g_shader_api.log" 2>&1 || {
+              cat "$OUT/logs/p4g_shader_api.log"
+              exit 1
+            }
+
+          echo "P4G C interface compiled."
+
+
       - name: Link Vita3K shader library
         shell: bash
         run: |
