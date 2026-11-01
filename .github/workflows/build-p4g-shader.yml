@@ -262,6 +262,8 @@ jobs:
             "external/SPIRV-Cross/spirv_parser.cpp"
             "external/SPIRV-Cross/spirv_glsl.cpp"
             "external/SPIRV-Cross/spirv_cfg.cpp"
+            "external/SPIRV-Cross/spirv_cross_parsed_ir.cpp"
+            "external/SPIRV-Cross/spirv_cross_util.cpp"
             "gxm/src/gxp.cpp"
             "gxm/src/color.cpp"
             "gxm/src/textures.cpp"
@@ -390,6 +392,7 @@ jobs:
           "$CXX" \
             -shared \
             -Wl,--no-undefined \
+            -Wl,--error-limit=0 \
             -Wl,-z,max-page-size=16384 \
             -o "$LIB" \
             "$OUT"/objects/*.o \
