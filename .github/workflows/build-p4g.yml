@@ -4,22 +4,28 @@ name: Persona 4 Golden Android
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Verify P4G files
+        shell: bash
         run: |
+          set -euo pipefail
+
           test -f games/p4g/game.cpp
           test -f games/p4g/AndroidManifest.xml
           test -f games/p4g/import/p4g_import_jni.cpp
           test -f games/p4g/import/p4g_shaders.cpp
-          test -f games/p5r/tools/build_harness_android.sh
-          test -f tools/maxwell/spirv_harness/SpirvHarness.csproj
 
           echo "P4G source files found."
 
@@ -29,23 +35,36 @@ jobs:
           packages: ''
 
       - name: Install Android build tools
+        shell: bash
         run: |
+          set -euo pipefail
+
           sdkmanager --install \
             "platforms;android-35" \
             "build-tools;35.0.0" \
             "ndk;28.2.13676358"
 
+          echo "Android build tools installed."
+
       - name: Verify Android tools
+        shell: bash
         run: |
+          set -euo pipefail
+
           cmake --version
           ninja --version
 
           test -d "$ANDROID_HOME/ndk/28.2.13676358"
+          test -f "$ANDROID_HOME/platforms/android-35/android.jar"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt2"
 
-          echo "Android build environment ready"
+          echo "Android build environment ready."
 
       - name: Download Vulkan Headers
+        shell: bash
         run: |
+          set -euo pipefail
+
           git clone --depth 1 \
             --branch v1.4.357 \
             https://github.com/KhronosGroup/Vulkan-Headers.git \
@@ -55,67 +74,134 @@ jobs:
 
           test -f vulkan-headers/Include/vulkan/vulkan.h
 
-          echo "Vulkan Headers ready"
+          echo "Vulkan Headers ready."
 
-      # Dependencia do tradutor Maxwell original do P5R.
-      - name: Download Ryubing source
+      - name: Download P4G shader ARM64 library
+        uses: actions/download-artifact@v4
+        with:
+          name: p4g-shader-arm64-link-diagnostics
+          run-id: 41313704008
+          github-token: ${{ github.token }}
+          path: build-shader-artifact
+
+      - name: Prepare P4G shader runtime
+        shell: bash
         run: |
-          set -eu
+          set -euo pipefail
 
-          mkdir -p private/third_party/ryubing
+          NDK="$ANDROID_HOME/ndk/28.2.13676358"
+          OUT="build-apk/shader-libs"
 
-          curl --fail --location --retry 3 \
-            --output private/third_party/ryubing.tar.gz \
-            "https://codeberg.org/Software_arch/Ryubing/archive/a82350bb77.tar.gz"
+          mkdir -p "$OUT"
 
-          tar -xzf private/third_party/ryubing.tar.gz \
-            -C private/third_party/ryubing \
-            --strip-components=1
+          echo "Finding Vita3K shader library..."
 
-          test -n "$(ls -A private/third_party/ryubing)"
+          mapfile -t shaders < <(
+            find build-shader-artifact \
+              -type f \
+              -name 'libp4gshader.so' \
+              | sort
+          )
 
-          echo "Ryubing source downloaded."
+          if [ "${#shaders[@]}" -ne 1 ]; then
+            echo "Expected exactly one libp4gshader.so."
+            printf '%s\n' "${shaders[@]}"
+            exit 1
+          fi
 
-      # O script original usa /src e .NET 10 NativeAOT.
-      - name: Build Android shader translator
-        run: |
-          set -eu
+          SHADER="${shaders[0]}"
 
-          mkdir -p private/build/spirv_harness_android
-          mkdir -p private/third_party
+          test -s "$SHADER"
 
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE:/src" \
-            -w /src \
-            mcr.microsoft.com/dotnet/sdk:10.0 \
-            sh games/p5r/tools/build_harness_android.sh
+          echo "Checking C++ shared runtime..."
 
-          test -s \
-            private/build/spirv_harness_android/libspirvharness.so
+          CPP="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
 
-          file private/build/spirv_harness_android/libspirvharness.so
+          test -s "$CPP"
 
-          echo "Shader translator built."
+          cp "$SHADER" "$OUT/libp4gshader.so"
+          cp "$CPP" "$OUT/libc++_shared.so"
+
+          echo "Checking ARM64 architecture..."
+
+          READELF="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+
+          "$READELF" -h "$OUT/libp4gshader.so" \
+            > "$OUT/shader-elf.txt"
+
+          grep -q AArch64 "$OUT/shader-elf.txt"
+
+          echo "Checking exported C API..."
+
+          NM="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+
+          "$NM" -D --defined-only \
+            "$OUT/libp4gshader.so" \
+            > "$OUT/shader-symbols.txt"
+
+          grep -Eq '[[:space:]]p4g_shader_api_version$' \
+            "$OUT/shader-symbols.txt"
+
+          grep -Eq '[[:space:]]p4g_shader_test_file$' \
+            "$OUT/shader-symbols.txt"
+
+          echo "Checking runtime dependencies..."
+
+          "$READELF" -d \
+            "$OUT/libp4gshader.so" \
+            > "$OUT/shader-dependencies.txt"
+
+          cat "$OUT/shader-dependencies.txt"
+
+          echo "P4G shader runtime ready."
+          ls -lh "$OUT"/*.so
 
       - name: Configure P4G ARM64
+        shell: bash
         run: |
-          cmake -S . -B build-p4g -G Ninja \
+          set -euo pipefail
+
+          NDK="$ANDROID_HOME/ndk/28.2.13676358"
+
+          cmake -S . \
+            -B build-p4g \
+            -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/28.2.13676358/build/cmake/android.toolchain.cmake" \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-29 \
-            -DANDROID_STL=c++_static \
+            -DANDROID_STL=c++_shared \
             -DNX_VULKAN_SDK="$GITHUB_WORKSPACE/vulkan-headers" \
             -DNX_GAME=p4g \
             -DNX_NCE=ON
 
+          echo "P4G ARM64 configuration ready."
+
       - name: Build P4G native library
+        shell: bash
         run: |
-          cmake --build build-p4g --target p4g -j 2
+          set -euo pipefail
+
+          cmake --build build-p4g \
+            --target p4g \
+            --parallel 2
+
+          test -s build-p4g/libp4g.so
+
+          echo "P4G native library built."
 
       - name: Build P4G importer
+        shell: bash
         run: |
-          cmake --build build-p4g --target p4gimport -j 2
+          set -euo pipefail
+
+          cmake --build build-p4g \
+            --target p4gimport \
+            --parallel 2
+
+          test -s build-p4g/libp4gimport.so
+
+          echo "P4G importer built."
 
       - name: Upload P4G native libraries
         uses: actions/upload-artifact@v4
@@ -124,15 +210,22 @@ jobs:
           path: |
             build-p4g/libp4g.so
             build-p4g/libp4gimport.so
-            private/build/spirv_harness_android/libspirvharness.so
+            build-apk/shader-libs/libp4gshader.so
+            build-apk/shader-libs/libc++_shared.so
           if-no-files-found: error
 
       - name: Compile P4G Java classes
+        shell: bash
         run: |
+          set -euo pipefail
+
           mkdir -p build-java/classes
 
-          find games/p4g/java -name "*.java" \
+          find games/p4g/java \
+            -name "*.java" \
             > build-java/sources.txt
+
+          test -s build-java/sources.txt
 
           javac \
             -encoding UTF-8 \
@@ -141,25 +234,34 @@ jobs:
             -d build-java/classes \
             @build-java/sources.txt
 
-          echo "P4G Java compilation successful"
+          echo "P4G Java compilation successful."
 
       - name: Generate P4G DEX
+        shell: bash
         run: |
+          set -euo pipefail
+
           mkdir -p build-java/dex
 
-          find build-java/classes -name "*.class" \
+          find build-java/classes \
+            -name "*.class" \
             > build-java/class-files.txt
+
+          test -s build-java/class-files.txt
+
+          mapfile -t classes \
+            < build-java/class-files.txt
 
           "$ANDROID_HOME/build-tools/35.0.0/d8" \
             --release \
             --min-api 30 \
             --lib "$ANDROID_HOME/platforms/android-35/android.jar" \
             --output build-java/dex \
-            $(cat build-java/class-files.txt)
+            "${classes[@]}"
 
-          test -f build-java/dex/classes.dex
+          test -s build-java/dex/classes.dex
 
-          echo "P4G classes.dex generated successfully"
+          echo "P4G DEX generated."
 
       - name: Upload P4G DEX
         uses: actions/upload-artifact@v4
@@ -169,7 +271,10 @@ jobs:
           if-no-files-found: error
 
       - name: Build P4G APK resources
+        shell: bash
         run: |
+          set -euo pipefail
+
           mkdir -p build-apk
 
           AAPT2="$ANDROID_HOME/build-tools/35.0.0/aapt2"
@@ -185,12 +290,15 @@ jobs:
             --manifest games/p4g/AndroidManifest.xml \
             build-apk/resources.zip
 
-          test -f build-apk/base.apk
+          test -s build-apk/base.apk
 
-          echo "P4G APK resources built successfully"
+          echo "P4G APK resources built."
 
       - name: Package P4G APK
+        shell: bash
         run: |
+          set -euo pipefail
+
           python3 - <<'PY'
           import zipfile
           from pathlib import Path
@@ -207,51 +315,126 @@ jobs:
               "lib/arm64-v8a/libp4gimport.so":
                   "build-p4g/libp4gimport.so",
 
-              "lib/arm64-v8a/libspirvharness.so":
-                  "private/build/spirv_harness_android/libspirvharness.so",
+              "lib/arm64-v8a/libp4gshader.so":
+                  "build-apk/shader-libs/libp4gshader.so",
+
+              "lib/arm64-v8a/libc++_shared.so":
+                  "build-apk/shader-libs/libc++_shared.so",
           }
 
+          if not apk.is_file():
+              raise FileNotFoundError(apk)
+
           with zipfile.ZipFile(apk, "a") as z:
+              existing = set(z.namelist())
+
               for dest, source in files.items():
                   source_path = Path(source)
 
-                  assert source_path.is_file(), source
+                  if not source_path.is_file():
+                      raise FileNotFoundError(source)
+
+                  if source_path.stat().st_size == 0:
+                      raise RuntimeError(
+                          f"Empty file: {source}"
+                      )
+
+                  if dest in existing:
+                      raise RuntimeError(
+                          f"Duplicate APK entry: {dest}"
+                      )
+
+                  method = (
+                      zipfile.ZIP_STORED
+                      if dest.startswith("lib/")
+                      else zipfile.ZIP_DEFLATED
+                  )
 
                   z.write(
                       source_path,
                       dest,
-                      compress_type=zipfile.ZIP_DEFLATED
+                      compress_type=method
                   )
 
-          print("P4G APK packaged successfully")
+                  print(
+                      f"Packaged: {dest} "
+                      f"({source_path.stat().st_size} bytes)"
+                  )
+
+          print("P4G APK packaged successfully.")
           PY
 
       - name: Verify P4G APK contents
+        shell: bash
         run: |
-          set -eu
+          set -euo pipefail
 
-          unzip -l build-apk/base.apk | grep 'classes.dex'
+          python3 - <<'PY'
+          import zipfile
 
-          unzip -l build-apk/base.apk | grep \
-            'lib/arm64-v8a/libp4g.so'
+          apk = "build-apk/base.apk"
 
-          unzip -l build-apk/base.apk | grep \
-            'lib/arm64-v8a/libp4gimport.so'
+          required = [
+              "classes.dex",
+              "lib/arm64-v8a/libp4g.so",
+              "lib/arm64-v8a/libp4gimport.so",
+              "lib/arm64-v8a/libp4gshader.so",
+              "lib/arm64-v8a/libc++_shared.so",
+          ]
 
-          unzip -l build-apk/base.apk | grep \
-            'lib/arm64-v8a/libspirvharness.so'
+          with zipfile.ZipFile(apk) as z:
+              names = z.namelist()
 
-          echo "All required libraries are packaged."
+              for name in required:
+                  if names.count(name) != 1:
+                      raise RuntimeError(
+                          f"Missing or duplicate: {name}"
+                      )
+
+                  info = z.getinfo(name)
+
+                  if info.file_size == 0:
+                      raise RuntimeError(
+                          f"Empty APK entry: {name}"
+                      )
+
+                  print(
+                      f"OK: {name} "
+                      f"({info.file_size} bytes)"
+                  )
+
+              if z.testzip() is not None:
+                  raise RuntimeError(
+                      "APK ZIP integrity check failed"
+                  )
+
+          print("All P4G libraries verified.")
+          PY
 
       - name: Sign P4G APK
+        shell: bash
         run: |
+          set -euo pipefail
+
           BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
 
-          "$BUILD_TOOLS/zipalign" -f -p 4 \
+          "$BUILD_TOOLS/zipalign" \
+            -f \
+            -P 16 \
+            -p \
+            4 \
             build-apk/base.apk \
             build-apk/aligned.apk
 
+          "$BUILD_TOOLS/zipalign" \
+            -c \
+            -P 16 \
+            -p \
+            4 \
+            build-apk/aligned.apk
+
           keytool -genkeypair \
+            -noprompt \
             -keystore build-apk/debug.keystore \
             -alias androiddebugkey \
             -storepass android \
@@ -273,9 +456,24 @@ jobs:
             --verbose \
             build-apk/p4g-android-alpha.apk
 
+          test -s build-apk/p4g-android-alpha.apk
+
+          echo "P4G APK signed successfully."
+
       - name: Upload P4G APK
         uses: actions/upload-artifact@v4
         with:
           name: Persona-4-Golden-Android-Alpha
           path: build-apk/p4g-android-alpha.apk
           if-no-files-found: error
+
+      - name: Upload shader packaging diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p4g-apk-shader-diagnostics
+          path: |
+            build-apk/shader-libs/shader-elf.txt
+            build-apk/shader-libs/shader-symbols.txt
+            build-apk/shader-libs/shader-dependencies.txt
+          if-no-files-found: warn
