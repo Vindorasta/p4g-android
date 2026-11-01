@@ -220,6 +220,124 @@ jobs:
           echo "SPIR-V Builder compiled for Android ARM64"
 
 
+      - name: Compile remaining shader dependencies
+        shell: bash
+        run: |
+          set -u
+
+          NDK="$ANDROID_HOME/ndk/28.2.13676358"
+          CXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++"
+
+          OUT="build-shader"
+          ROOT="vita3k-source"
+
+          mkdir -p "$OUT/logs"
+          mkdir -p "$OUT/objects"
+
+          printf 'source\tstatus\n' \
+            > "$OUT/dependency-results.tsv"
+
+          SOURCES=(
+            "external/glslang/SPIRV/InReadableOrder.cpp"
+            "external/glslang/SPIRV/Logger.cpp"
+            "external/glslang/SPIRV/SpvTools.cpp"
+            "external/glslang/SPIRV/disassemble.cpp"
+            "external/SPIRV-Cross/spirv_cross.cpp"
+            "external/SPIRV-Cross/spirv_parser.cpp"
+            "external/SPIRV-Cross/spirv_glsl.cpp"
+            "external/SPIRV-Cross/spirv_cfg.cpp"
+            "gxm/src/gxp.cpp"
+            "gxm/src/color.cpp"
+            "gxm/src/textures.cpp"
+            "util/src/string_utils.cpp"
+            "util/src/fs_utils.cpp"
+          )
+
+          SUCCESS=0
+          FAILED=0
+
+          for source in "${SOURCES[@]}"; do
+            echo "::group::Compiling $source"
+
+            name="${source//\//_}"
+            name="${name%.cpp}"
+
+            log="$OUT/logs/dependency_${name}.log"
+            object="$OUT/objects/dependency_${name}.o"
+
+            if "$CXX" \
+              -std=c++23 \
+              -include utility \
+              -DSPDLOG_FMT_EXTERNAL \
+              -DFMT_HEADER_ONLY \
+              -O2 \
+              -fPIC \
+              -I "$OUT/third_party" \
+              -I "$ROOT/external/glslang" \
+              -I "$ROOT/external/SPIRV-Cross" \
+              -I "$ROOT/vita3k/shader/include" \
+              -I "$ROOT/vita3k/util/include" \
+              -I "$ROOT/vita3k/gxm/include" \
+              -I "$ROOT/vita3k/features/include" \
+              -c "$ROOT/vita3k/$source" \
+              -o "$object" \
+              > "$log" 2>&1
+            then
+              printf '%s\tPASS\n' "$source" \
+                >> "$OUT/dependency-results.tsv"
+              SUCCESS=$((SUCCESS + 1))
+            else
+              # Dependencias em external/ ficam fora de vita3k/.
+              if [[ "$source" == external/* ]]; then
+                if "$CXX" \
+                  -std=c++23 \
+                  -include utility \
+                  -DSPDLOG_FMT_EXTERNAL \
+                  -DFMT_HEADER_ONLY \
+                  -O2 \
+                  -fPIC \
+                  -I "$OUT/third_party" \
+                  -I "$ROOT/external/glslang" \
+                  -I "$ROOT/external/SPIRV-Cross" \
+                  -I "$ROOT/vita3k/shader/include" \
+                  -I "$ROOT/vita3k/util/include" \
+                  -I "$ROOT/vita3k/gxm/include" \
+                  -I "$ROOT/vita3k/features/include" \
+                  -c "$ROOT/$source" \
+                  -o "$object" \
+                  > "$log" 2>&1
+                then
+                  printf '%s\tPASS\n' "$source" \
+                    >> "$OUT/dependency-results.tsv"
+                  SUCCESS=$((SUCCESS + 1))
+                  echo "::endgroup::"
+                  continue
+                fi
+              fi
+
+              printf '%s\tFAIL\n' "$source" \
+                >> "$OUT/dependency-results.tsv"
+              FAILED=$((FAILED + 1))
+
+              grep -m 5 -E \
+                'fatal error:|error:' "$log" \
+                || tail -n 10 "$log"
+            fi
+
+            echo "::endgroup::"
+          done
+
+          echo "Dependency compilation:"
+          echo "PASS: $SUCCESS"
+          echo "FAIL: $FAILED"
+
+          cat "$OUT/dependency-results.tsv"
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "Some dependencies need additional setup."
+            exit 1
+          fi
+
 
       # Nova etapa:
       # Tenta vincular os componentes em uma biblioteca
@@ -316,6 +434,7 @@ jobs:
         with:
           name: p4g-shader-arm64-link-diagnostics
           path: |
+            build-shader/dependency-results.tsv
             build-shader/summary.txt
             build-shader/results.tsv
             build-shader/logs/
