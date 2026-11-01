@@ -47,11 +47,10 @@ jobs:
           "$TOOLCHAIN/aarch64-linux-android29-clang++" \
             --version
 
-
-
       - name: Install Vita3K dependencies
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             libboost-dev \
             libspdlog-dev \
@@ -68,51 +67,96 @@ jobs:
           cp -a /usr/include/fmt \
             build-shader/third_party/
 
-          test -f build-shader/third_party/boost/core/demangle.hpp
-          test -f build-shader/third_party/spdlog/spdlog.h
-          test -f build-shader/third_party/fmt/format.h
+          test -f \
+            build-shader/third_party/boost/core/demangle.hpp
 
-          echo "Boost, spdlog and fmt headers ready"
+          test -f \
+            build-shader/third_party/spdlog/spdlog.h
 
+          test -f \
+            build-shader/third_party/fmt/format.h
 
+          echo "Vita3K dependencies ready"
 
       - name: Compile real USSE decoder
-        id: compile
         shell: bash
         run: |
-          set +e
+          set -e
 
           NDK="$ANDROID_HOME/ndk/28.2.13676358"
           CXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++"
 
-          "$CXX" \
+          mkdir -p build-shader/logs
+
+          if "$CXX" \
             -std=c++23 \
             -include utility \
             -DSPDLOG_FMT_EXTERNAL \
             -I build-shader/third_party \
-            -O2 \
-            -fPIC \
             -I vita3k-source/vita3k/shader/include \
             -I vita3k-source/vita3k/util/include \
             -I vita3k-source/vita3k/gxm/include \
             -I vita3k-source/vita3k/features/include \
+            -O2 \
+            -fPIC \
             -c \
             vita3k-source/vita3k/shader/src/usse_decode_helpers.cpp \
             -o build-shader/usse_decode_helpers.o \
-            > build-shader/logs/compile.log 2>&1
-
-          RC=$?
-          echo "$RC" > build-shader/logs/exit-code.txt
-
-          if [ "$RC" -eq 0 ]; then
-            echo "USSE decoder compiled for ARM64"
+            > build-shader/logs/usse_compile.log 2>&1
+          then
+            echo "USSE decoder compiled successfully"
             file build-shader/usse_decode_helpers.o
           else
             echo "USSE decoder compilation failed"
-            cat build-shader/logs/compile.log
+            cat build-shader/logs/usse_compile.log
+            exit 1
           fi
 
-          exit "$RC"
+      - name: Compile real GXP parser
+        shell: bash
+        run: |
+          set -e
+
+          NDK="$ANDROID_HOME/ndk/28.2.13676358"
+          CXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++"
+
+          mkdir -p build-shader/logs
+
+          if "$CXX" \
+            -std=c++23 \
+            -include utility \
+            -DSPDLOG_FMT_EXTERNAL \
+            -I build-shader/third_party \
+            -I vita3k-source/vita3k/shader/include \
+            -I vita3k-source/vita3k/util/include \
+            -I vita3k-source/vita3k/gxm/include \
+            -I vita3k-source/vita3k/features/include \
+            -O2 \
+            -fPIC \
+            -c \
+            vita3k-source/vita3k/shader/src/gxp_parser.cpp \
+            -o build-shader/gxp_parser.o \
+            > build-shader/logs/gxp_parser_compile.log 2>&1
+          then
+            echo "GXP parser compiled successfully"
+            file build-shader/gxp_parser.o
+          else
+            echo "GXP parser compilation failed"
+            cat build-shader/logs/gxp_parser_compile.log
+            exit 1
+          fi
+
+      - name: Verify ARM64 objects
+        run: |
+          set -e
+
+          test -s build-shader/usse_decode_helpers.o
+          test -s build-shader/gxp_parser.o
+
+          file build-shader/usse_decode_helpers.o
+          file build-shader/gxp_parser.o
+
+          echo "Both Vita3K components compiled for ARM64"
 
       - name: Upload build diagnostics
         if: always()
