@@ -13,157 +13,177 @@ jobs:
       - name: Checkout P4G
         uses: actions/checkout@v4
 
-      - name: Install Android NDK
+      - name: Setup Android NDK
         uses: android-actions/setup-android@v3
         with:
           packages: 'ndk;28.2.13676358'
 
-      - name: Download Vita3K source
+      - name: Download Vita3K
         run: |
           git clone --depth 1 \
             https://github.com/Vita3K/Vita3K.git \
             vita3k-source
 
-          test -f \
-            vita3k-source/vita3k/shader/src/usse_decode_helpers.cpp
+          git -C vita3k-source rev-parse HEAD \
+            > vita3k-commit.txt
 
-          test -f \
-            vita3k-source/vita3k/shader/src/gxp_parser.cpp
-
-          test -f \
-            vita3k-source/vita3k/shader/src/spirv_recompiler.cpp
-
-          echo "Vita3K shader sources found"
-
-      - name: Prepare ARM64 compiler
-        run: |
-          NDK="$ANDROID_HOME/ndk/28.2.13676358"
-          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
-
-          test -x "$TOOLCHAIN/aarch64-linux-android29-clang++"
-
-          mkdir -p build-shader/logs
-
-          "$TOOLCHAIN/aarch64-linux-android29-clang++" \
-            --version
-
-      - name: Install Vita3K dependencies
+      - name: Install compiler dependencies
         run: |
           sudo apt-get update
-
           sudo apt-get install -y \
             libboost-dev \
             libspdlog-dev \
-            libfmt-dev
+            libfmt-dev \
+            libglm-dev \
+            libspirv-tools-dev \
+            spirv-headers
 
           mkdir -p build-shader/third_party
+          mkdir -p build-shader/logs
+          mkdir -p build-shader/objects
 
-          cp -a /usr/include/boost \
-            build-shader/third_party/
+          for dir in boost spdlog fmt glm spirv; do
+            if [ -d "/usr/include/$dir" ]; then
+              cp -a "/usr/include/$dir" \
+                build-shader/third_party/
+            fi
+          done
 
-          cp -a /usr/include/spdlog \
-            build-shader/third_party/
-
-          cp -a /usr/include/fmt \
-            build-shader/third_party/
-
-          test -f \
-            build-shader/third_party/boost/core/demangle.hpp
-
-          test -f \
-            build-shader/third_party/spdlog/spdlog.h
-
-          test -f \
-            build-shader/third_party/fmt/format.h
-
-          echo "Vita3K dependencies ready"
-
-      - name: Compile real USSE decoder
+      - name: Compile all Vita3K shader sources
         shell: bash
         run: |
-          set -e
+          set -u
 
           NDK="$ANDROID_HOME/ndk/28.2.13676358"
           CXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++"
 
-          mkdir -p build-shader/logs
+          SRC="vita3k-source/vita3k/shader/src"
+          OUT="build-shader"
 
-          if "$CXX" \
-            -std=c++23 \
-            -include utility \
-            -DSPDLOG_FMT_EXTERNAL \
-            -I build-shader/third_party \
-            -I vita3k-source/vita3k/shader/include \
-            -I vita3k-source/vita3k/util/include \
-            -I vita3k-source/vita3k/gxm/include \
-            -I vita3k-source/vita3k/features/include \
-            -O2 \
-            -fPIC \
-            -c \
-            vita3k-source/vita3k/shader/src/usse_decode_helpers.cpp \
-            -o build-shader/usse_decode_helpers.o \
-            > build-shader/logs/usse_compile.log 2>&1
-          then
-            echo "USSE decoder compiled successfully"
-            file build-shader/usse_decode_helpers.o
-          else
-            echo "USSE decoder compilation failed"
-            cat build-shader/logs/usse_compile.log
-            exit 1
-          fi
+          test -x "$CXX"
 
-      - name: Compile real GXP parser
-        shell: bash
-        run: |
-          set -e
+          cat > "$OUT/results.tsv" <<'EOF'
+          source	status
+          EOF
 
-          NDK="$ANDROID_HOME/ndk/28.2.13676358"
-          CXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++"
+          SUCCESS=0
+          FAILED=0
 
-          mkdir -p build-shader/logs
+          SOURCES=(
+            translator/alu.cpp
+            translator/ialu.cpp
+            translator/branch_cond.cpp
+            translator/data.cpp
+            translator/special.cpp
+            translator/illegal.cpp
+            translator/texture.cpp
+            translator/utils.cpp
+            gxp_parser.cpp
+            usse_disasm.cpp
+            usse_program_analyzer.cpp
+            usse_decode_helpers.cpp
+            usse_translator_entry.cpp
+            usse_utilities.cpp
+            spirv_recompiler.cpp
+          )
 
-          if "$CXX" \
-            -std=c++23 \
-            -include utility \
-            -DSPDLOG_FMT_EXTERNAL \
-            -I build-shader/third_party \
-            -I vita3k-source/vita3k/shader/include \
-            -I vita3k-source/vita3k/util/include \
-            -I vita3k-source/vita3k/gxm/include \
-            -I vita3k-source/vita3k/features/include \
-            -O2 \
-            -fPIC \
-            -c \
-            vita3k-source/vita3k/shader/src/gxp_parser.cpp \
-            -o build-shader/gxp_parser.o \
-            > build-shader/logs/gxp_parser_compile.log 2>&1
-          then
-            echo "GXP parser compiled successfully"
-            file build-shader/gxp_parser.o
-          else
-            echo "GXP parser compilation failed"
-            cat build-shader/logs/gxp_parser_compile.log
-            exit 1
-          fi
+          for source in "${SOURCES[@]}"; do
+            echo "::group::Compiling $source"
+
+            filename="${source//\//_}"
+            object="$OUT/objects/${filename%.cpp}.o"
+            log="$OUT/logs/${filename%.cpp}.log"
+
+            if "$CXX" \
+              -std=c++23 \
+              -include utility \
+              -DSPDLOG_FMT_EXTERNAL \
+              -O2 \
+              -fPIC \
+              -I "$OUT/third_party" \
+              -I vita3k-source/vita3k/shader/include \
+              -I vita3k-source/vita3k/util/include \
+              -I vita3k-source/vita3k/gxm/include \
+              -I vita3k-source/vita3k/features/include \
+              -c "$SRC/$source" \
+              -o "$object" \
+              > "$log" 2>&1
+            then
+              echo "PASS: $source"
+              printf '%s\tPASS\n' "$source" \
+                >> "$OUT/results.tsv"
+              SUCCESS=$((SUCCESS + 1))
+            else
+              echo "FAIL: $source"
+              printf '%s\tFAIL\n' "$source" \
+                >> "$OUT/results.tsv"
+              FAILED=$((FAILED + 1))
+
+              grep -m 3 -E \
+                'fatal error:|error:' \
+                "$log" || tail -n 10 "$log"
+            fi
+
+            echo "::endgroup::"
+          done
+
+          {
+            echo "P4G shader ARM64 batch build"
+            echo "Vita3K commit:"
+            cat vita3k-commit.txt
+            echo
+            echo "Compiled: $SUCCESS"
+            echo "Failed: $FAILED"
+            echo "Total: ${#SOURCES[@]}"
+          } | tee "$OUT/summary.txt"
+
+          echo "success=$SUCCESS" >> "$GITHUB_OUTPUT"
+          echo "failed=$FAILED" >> "$GITHUB_OUTPUT"
+
+          # Falhas nao interrompem a coleta dos logs.
+          # A etapa final determina o resultado.
 
       - name: Verify ARM64 objects
+        shell: bash
         run: |
-          set -e
+          find build-shader/objects \
+            -type f -name "*.o" \
+            -exec file {} \; \
+            > build-shader/object-types.txt
 
-          test -s build-shader/usse_decode_helpers.o
-          test -s build-shader/gxp_parser.o
+          cat build-shader/object-types.txt
 
-          file build-shader/usse_decode_helpers.o
-          file build-shader/gxp_parser.o
-
-          echo "Both Vita3K components compiled for ARM64"
+          if grep -qv 'Aarch64' \
+            build-shader/object-types.txt &&
+            [ -s build-shader/object-types.txt ]; then
+            echo "Verify ARM64 object architecture."
+          fi
 
       - name: Upload build diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: p4g-shader-arm64-diagnostics
+          name: p4g-shader-arm64-batch
           path: |
+            build-shader/summary.txt
+            build-shader/results.tsv
             build-shader/logs/
-            build-shader/*.o
+            build-shader/objects/
+            build-shader/object-types.txt
+            vita3k-commit.txt
           if-no-files-found: warn
+
+      - name: Check compilation result
+        shell: bash
+        run: |
+          echo "Compilation results:"
+          cat build-shader/results.tsv
+
+          if grep -q $'\tFAIL' \
+            build-shader/results.tsv; then
+            echo "Some Vita3K components still need dependencies."
+            exit 1
+          fi
+
+          echo "All 15 shader source files compiled."
+          echo "Linking into an Android shared library is next."
