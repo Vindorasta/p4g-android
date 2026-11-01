@@ -1,6 +1,7 @@
 
 #include <nx/game.h>
 #include <nx/runtime.h>
+#include <cstdlib>
 
 namespace nx {
 
@@ -15,6 +16,8 @@ const game::Info game::kInfo = {
 };
 
 void game::after_init() {
+    setenv("NX_FLIP_Y", "1", 0);
+
     log("p4g: runtime initialized");
     log("p4g: beginning game-specific initialization");
 }
