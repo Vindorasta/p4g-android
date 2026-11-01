@@ -423,6 +423,8 @@ jobs:
             -o "$LIB"
             "${objects[@]}"
             "$SDL_LIB"
+            -lGLESv2
+            -lOpenSLES
             -llog
             -ldl
             -landroid
