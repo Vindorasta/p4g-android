@@ -48,16 +48,31 @@ jobs:
             --version
 
 
-      - name: Install Boost headers
+
+      - name: Install Vita3K dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libboost-dev
+          sudo apt-get install -y \
+            libboost-dev \
+            libspdlog-dev \
+            libfmt-dev
 
           mkdir -p build-shader/third_party
-          cp -a /usr/include/boost build-shader/third_party/
+
+          cp -a /usr/include/boost \
+            build-shader/third_party/
+
+          cp -a /usr/include/spdlog \
+            build-shader/third_party/
+
+          cp -a /usr/include/fmt \
+            build-shader/third_party/
 
           test -f build-shader/third_party/boost/core/demangle.hpp
-          echo "Boost headers ready"
+          test -f build-shader/third_party/spdlog/spdlog.h
+          test -f build-shader/third_party/fmt/format.h
+
+          echo "Boost, spdlog and fmt headers ready"
 
 
 
@@ -72,6 +87,7 @@ jobs:
 
           "$CXX" \
             -std=c++20 \
+            -DSPDLOG_FMT_EXTERNAL \
             -I build-shader/third_party \
             -O2 \
             -fPIC \
