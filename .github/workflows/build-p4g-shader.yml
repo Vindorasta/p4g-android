@@ -281,6 +281,7 @@ jobs:
             log="$OUT/logs/dependency_${name}.log"
             object="$OUT/objects/dependency_${name}.o"
 
+            
             if "$CXX" \
               -std=c++23 \
               -include utility \
@@ -289,6 +290,7 @@ jobs:
               -O2 \
               -fPIC \
               -I "$OUT/third_party" \
+              -I "$OUT/sdl3-source/include" \
               -I "$ROOT/external/glslang" \
               -I "$ROOT/external/SPIRV-Cross" \
               -I "$ROOT/vita3k/shader/include" \
