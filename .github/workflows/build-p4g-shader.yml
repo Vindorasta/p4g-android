@@ -1,0 +1,93 @@
+
+name: Build P4G Shader ARM64
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-shader:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout P4G
+        uses: actions/checkout@v4
+
+      - name: Install Android NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'ndk;28.2.13676358'
+
+      - name: Download Vita3K source
+        run: |
+          git clone --depth 1 \
+            https://github.com/Vita3K/Vita3K.git \
+            vita3k-source
+
+          test -f \
+            vita3k-source/vita3k/shader/src/usse_decode_helpers.cpp
+
+          test -f \
+            vita3k-source/vita3k/shader/src/gxp_parser.cpp
+
+          test -f \
+            vita3k-source/vita3k/shader/src/spirv_recompiler.cpp
+
+          echo "Vita3K shader sources found"
+
+      - name: Prepare ARM64 compiler
+        run: |
+          NDK="$ANDROID_HOME/ndk/28.2.13676358"
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          test -x "$TOOLCHAIN/aarch64-linux-android29-clang++"
+
+          mkdir -p build-shader/logs
+
+          "$TOOLCHAIN/aarch64-linux-android29-clang++" \
+            --version
+
+      - name: Compile real USSE decoder
+        id: compile
+        shell: bash
+        run: |
+          set +e
+
+          NDK="$ANDROID_HOME/ndk/28.2.13676358"
+          CXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++"
+
+          "$CXX" \
+            -std=c++20 \
+            -O2 \
+            -fPIC \
+            -I vita3k-source/vita3k/shader/include \
+            -I vita3k-source/vita3k/util/include \
+            -I vita3k-source/vita3k/gxm/include \
+            -I vita3k-source/vita3k/features/include \
+            -c \
+            vita3k-source/vita3k/shader/src/usse_decode_helpers.cpp \
+            -o build-shader/usse_decode_helpers.o \
+            > build-shader/logs/compile.log 2>&1
+
+          RC=$?
+          echo "$RC" > build-shader/logs/exit-code.txt
+
+          if [ "$RC" -eq 0 ]; then
+            echo "USSE decoder compiled for ARM64"
+            file build-shader/usse_decode_helpers.o
+          else
+            echo "USSE decoder compilation failed"
+            cat build-shader/logs/compile.log
+          fi
+
+          exit "$RC"
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p4g-shader-arm64-diagnostics
+          path: |
+            build-shader/logs/
+            build-shader/*.o
+          if-no-files-found: warn
