@@ -397,27 +397,109 @@ jobs:
 
           cat > "$OUT/p4g_shader_api.cpp" <<'EOF'
           #include <shader/spirv_recompiler.h>
-          #include <string>
+          #include <features/state.h>
+          #include <gxm/types.h>
 
+          #include <algorithm>
+          #include <cstddef>
+          #include <cstdint>
+          #include <cstdio>
+          #include <cstring>
+          #include <exception>
+          #include <string>
+          #include <vector>
+
+          // Vita3K-derived GXP -> Vulkan SPIR-V ABI.
+          // GPL-2.0-or-later: retain Vita3K notices and sources.
+          // Return: 0=written, -1=args, -2=invalid header,
+          //         -3=translation failed, -4=invalid SPIR-V,
+          //         -5=write failure.
           extern "C" int p4g_shader_api_version() {
-              return 1;
+              return 2;
           }
 
-          extern "C" int p4g_shader_test_file(const char* path) {
-              if (!path || !*path)
+          extern "C" int p4g_shader_convert(
+              const void* gxp_data,
+              size_t gxp_size,
+              const char* output_path
+          ) {
+              if (!gxp_data || !output_path || !*output_path)
                   return -1;
 
-              try {
-                  shader::convert_gxp_to_glsl_from_filepath(
-                      std::string(path)
-                  );
-                  return 0;
-              } catch (...) {
+              if (gxp_size < sizeof(SceGxmProgram) ||
+                  gxp_size > 32u * 1024u * 1024u)
                   return -2;
+
+              // Check header before interpreting any program fields.
+              // GXP size can omit trailing alignment/padding bytes.
+              uint32_t magic = 0;
+              uint32_t declared_size = 0;
+              std::memcpy(&magic, gxp_data, sizeof(magic));
+              std::memcpy(&declared_size,
+                          static_cast<const uint8_t*>(gxp_data) + 8,
+                          sizeof(declared_size));
+
+              if (magic != 0x00505847u ||
+                  declared_size < sizeof(SceGxmProgram) ||
+                  declared_size > gxp_size)
+                  return -2;
+
+              // An aligned copy avoids unaligned struct access.
+              std::vector<uint32_t> aligned((gxp_size + 3) / 4, 0);
+              std::memcpy(aligned.data(), gxp_data, gxp_size);
+
+              try {
+                  const auto& program =
+                      *reinterpret_cast<const SceGxmProgram*>(aligned.data());
+
+                  FeatureState features{};
+                  features.spirv_shader = true;
+
+                  shader::Hints hints{};
+                  hints.attributes = nullptr;
+                  hints.color_format =
+                      SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR;
+
+                  std::fill_n(hints.vertex_textures,
+                      SCE_GXM_MAX_TEXTURE_UNITS,
+                      SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
+                  std::fill_n(hints.fragment_textures,
+                      SCE_GXM_MAX_TEXTURE_UNITS,
+                      SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
+
+                  const auto generated = shader::convert_gxp(
+                      program,
+                      "p4g_android",
+                      features,
+                      shader::Target::SpirVVulkan,
+                      hints
+                  );
+
+                  const auto& spirv = generated.spirv;
+                  if (spirv.size() < 5 ||
+                      spirv[0] != 0x07230203u ||
+                      spirv[3] == 0)
+                      return -4;
+
+                  FILE* output = std::fopen(output_path, "wb");
+                  if (!output)
+                      return -5;
+
+                  const size_t written = std::fwrite(
+                      spirv.data(), sizeof(uint32_t), spirv.size(), output);
+                  const int close_result = std::fclose(output);
+                  if (written != spirv.size() || close_result != 0) {
+                      std::remove(output_path);
+                      return -5;
+                  }
+                  return 0;
+              } catch (const std::exception&) {
+                  return -3;
+              } catch (...) {
+                  return -3;
               }
           }
           EOF
-
           "$CXX" \
             -std=c++23 \
             -fexceptions \
@@ -437,7 +519,7 @@ jobs:
               exit 1
             }
 
-          echo "P4G C interface compiled."
+          echo "P4G C interface v2 compiled."
 
 
       - name: Link Vita3K shader library
@@ -528,8 +610,12 @@ jobs:
           echo "Dependencies:"
           "$READELF" -d "$LIB" | grep NEEDED || true
 
-          echo "ARM64 shader library verified."
-          echo "GXP translation interface still requires integration."
+          NM="$TOOLCHAIN/llvm-nm"
+          "$NM" -D --defined-only "$LIB" | grep -Eq '[[:space:]]p4g_shader_api_version$'
+          "$NM" -D --defined-only "$LIB" | grep -Eq '[[:space:]]p4g_shader_convert$'
+
+          echo "ARM64 shader C API v2 symbols verified."
+          echo "Runtime GXP conversion still needs Android integration."
 
       - name: Upload build diagnostics
         if: always()
@@ -543,6 +629,7 @@ jobs:
             build-shader/logs/
             build-shader/object-types.txt
             build-shader/libp4gshader.so
+            build-shader/p4g_shader_api.cpp
             vita3k-commit.txt
           if-no-files-found: warn
 
