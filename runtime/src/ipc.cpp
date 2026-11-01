@@ -271,7 +271,26 @@ uint32_t ipc_request(CPU& c, uint32_t handle, uint64_t buf, uint64_t) {
                 ctx.in_services.push_back(k ? k->svc : nullptr);
             }
         }
+
+        log(
+            "p4g: IPC request service=%s cmd=%u",
+            target->name.c_str(),
+            ctx.cmd
+        );
         rc = target->handle(ctx);
+
+        log(
+            "p4g: IPC response service=%s cmd=%u "
+            "result=0x%08X data_bytes=%zu objects=%zu "
+            "copy_handles=%zu move_handles=%zu",
+            target->name.c_str(),
+            ctx.cmd,
+            rc,
+            ctx.out.size(),
+            ctx.out_objects.size(),
+            ctx.out_copy.size(),
+            ctx.out_move.size()
+        );
     }
 
     {
