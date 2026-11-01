@@ -47,6 +47,20 @@ jobs:
           "$TOOLCHAIN/aarch64-linux-android29-clang++" \
             --version
 
+
+      - name: Install Boost headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libboost-dev
+
+          mkdir -p build-shader/third_party
+          cp -a /usr/include/boost build-shader/third_party/
+
+          test -f build-shader/third_party/boost/core/demangle.hpp
+          echo "Boost headers ready"
+
+
+
       - name: Compile real USSE decoder
         id: compile
         shell: bash
@@ -58,6 +72,7 @@ jobs:
 
           "$CXX" \
             -std=c++20 \
+            -I build-shader/third_party \
             -O2 \
             -fPIC \
             -I vita3k-source/vita3k/shader/include \
