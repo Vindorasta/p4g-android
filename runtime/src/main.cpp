@@ -187,7 +187,7 @@ void boot() {
     for (const auto& name : mod_names) {
         std::string mod_file = find_mod_exefs(name);
         std::string error;
-        const uint64_t base = kModuleBase + uint64_t(nso.size()) * 0x10000000;
+        const uint64_t base = kModuleBase + uint64_t(nso.size()) * 0x20000000;
         if (!mod_file.empty()) {
             log("nce: loading mod exefs override: %s", mod_file.c_str());
             auto m = nce::load_nso(mod_file, name, base, error);
