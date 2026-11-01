@@ -87,6 +87,26 @@ std::shared_ptr<Service> common_state_getter() {
 std::shared_ptr<Service> self_controller() {
     return svc("ISelfController", [](Service& s) {
         s.cmds[40] = [](IpcCtx& c) { c.push<uint64_t>(1); return 0u; };  // CreateManagedDisplayLayer
+        
+        // CreateManagedDisplaySeparableLayer (cmd 44).
+        // Retorna os IDs das camadas principal e de gravacao.
+        s.cmds[44] = [](IpcCtx& c) {
+            constexpr uint64_t application_layer = 1;
+            constexpr uint64_t recording_layer = 2;
+
+            c.push<uint64_t>(application_layer);
+            c.push<uint64_t>(recording_layer);
+
+            log(
+                "p4g: CreateManagedDisplaySeparableLayer "
+                "-> application=%llu, recording=%llu",
+                (unsigned long long)application_layer,
+                (unsigned long long)recording_layer
+            );
+
+            return 0u;
+        };
+
         s.cmds[0] = [](IpcCtx&) { return 0u; };                             // Exit
         s.cmds[9] = [](IpcCtx& c) {  // GetLibraryAppletLaunchableEvent: signaled, a library applet can be launched
             auto e = std::make_shared<EventState>();
