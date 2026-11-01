@@ -247,10 +247,9 @@ jobs:
             -name "*.class" \
             > build-java/class-files.txt
 
-          test -s build-java/class-files.txt
+          mapfile -t classes < build-java/class-files.txt
 
-          mapfile -t classes \
-            < build-java/class-files.txt
+          test "${#classes[@]}" -gt 0
 
           "$ANDROID_HOME/build-tools/35.0.0/d8" \
             --release \
@@ -418,20 +417,24 @@ jobs:
 
           BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
 
+          echo "Aligning APK to 16 KB pages..."
+
           "$BUILD_TOOLS/zipalign" \
             -f \
             -P 16 \
-            -p \
             4 \
             build-apk/base.apk \
             build-apk/aligned.apk
 
+          echo "Verifying APK alignment..."
+
           "$BUILD_TOOLS/zipalign" \
             -c \
             -P 16 \
-            -p \
             4 \
             build-apk/aligned.apk
+
+          echo "Generating debug signing key..."
 
           keytool -genkeypair \
             -noprompt \
@@ -444,6 +447,8 @@ jobs:
             -validity 365 \
             -dname "CN=Android Debug,O=Development,C=BR"
 
+          echo "Signing P4G APK..."
+
           "$BUILD_TOOLS/apksigner" sign \
             --ks build-apk/debug.keystore \
             --ks-key-alias androiddebugkey \
@@ -451,6 +456,8 @@ jobs:
             --key-pass pass:android \
             --out build-apk/p4g-android-alpha.apk \
             build-apk/aligned.apk
+
+          echo "Verifying APK signature..."
 
           "$BUILD_TOOLS/apksigner" verify \
             --verbose \
