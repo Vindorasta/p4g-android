@@ -40,12 +40,43 @@ std::shared_ptr<Service> make_service(const std::string& name) {
     return std::make_shared<Service>(name);
 }
 
+
 uint32_t Service::handle(IpcCtx& ctx) {
     auto it = cmds.find(ctx.cmd);
-    if (it != cmds.end()) return it->second(ctx);
-    log("ipc: %s cmd %u not implemented (stub ok)", name.c_str(), ctx.cmd);
+
+    if (it != cmds.end()) {
+        return it->second(ctx);
+    }
+
+    if (name == "IApplicationFunctions" && ctx.cmd == 22) {
+        if (ctx.in != nullptr && ctx.in_size >= 4) {
+            uint32_t result = 0;
+            std::memcpy(&result, ctx.in, sizeof(result));
+
+            log(
+                "p4g: SetTerminateResult called, result=0x%08X",
+                result
+            );
+        } else {
+            log(
+                "p4g: SetTerminateResult called, "
+                "missing result payload (size=%zu)",
+                ctx.in_size
+            );
+        }
+
+        return 0;
+    }
+
+    log(
+        "ipc: %s cmd %u not implemented (stub ok)",
+        name.c_str(),
+        ctx.cmd
+    );
+
     return 0;
 }
+
 
 // ---- sm: ------------------------------------------------------------------------------------------------------
 
