@@ -23,6 +23,7 @@ import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 import android.provider.Settings;
 import android.system.Os;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
@@ -46,8 +47,8 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * The home screen in front of the game (a NativeActivity, libp5r.so): checks for the player's data in Internal
- * storage/Persona 5 Royal (asking for all-files access), shows the options and writes them to that folder's
+ * The home screen in front of the game (a NativeActivity, libp4g.so): checks for the player's data in Internal
+ * storage/Persona 4 Golden (asking for all-files access), shows the options and writes them to that folder's
  * config.txt, whose NX_* lines the runtime turns into its switches:
  *   game text   the language of the game's texts and subtitles (language=auto, default: the device's, English when
  *               the game lacks it; or en-US, es, fr, de, it, ja, ko, zh-Hans, zh-Hant). The voices are the game's own
@@ -55,14 +56,14 @@ import java.util.Map;
  *   resolution  720p (NX_HANDHELD=1, default) or 1080p (NX_HANDHELD=0)
  *   interface   at 720p (NX_HUD_1080=0, default: faster) or, in 720p, drawn at 1080p (NX_HUD_1080=1: sharper text)
  *   graphics    low (default), medium or high: textures one mip smaller (NX_LOD_BIAS=1), half a mip, or the game's
- *               own. (A lower render resolution needs the engine's target sizes: games/p5r/PROGRESO.md.)
- *   frame rate  30 (NX_FPS_CAP=30, default) or 60 (NX_FPS_CAP=60: games/p5r/game.cpp patches the engine's interval)
+ *               own. (A lower render resolution needs the engine's target sizes: games/p4g/PROGRESO.md.)
+ *   frame rate  30 (NX_FPS_CAP=30, default) or 60 (NX_FPS_CAP=60: runtime support varies by title)
  *   FPS counter off (default) or on (NX_SHOW_FPS)
  *   shadows     off (NX_SHADOWS=0, default: the shadow maps are not drawn, ~9% of the GPU on the 3D title) or on
  *   on-screen controls on (default) or off (NX_TOUCH_SHOW), their size (NX_TOUCH_SIZE) and opacity (NX_TOUCH_OPACITY),
  *               and where they are (NX_TOUCH_LAYOUT, written by ControlsEditor)
  * and imports or exports the saves (user/save, SaveFiles.java): a ZIP or a folder in, a ZIP in Download out.
- * The game: the player picks their own NSP or XCI (Persona 5 Royal 1.0.0) and prod.keys here; ImportActivity checks
+ * The game: the player picks their own NSP or XCI (Persona 4 Golden 1.0.0) and prod.keys here; ImportActivity checks
  * them and translates the game's shaders once, and every start reads the game from that file as it is (the runtime's
  * game_image.cpp, through NX_GAME_FD / NX_GAME_NAME / NX_KEYS). Nothing of the game is copied but its shaders. A data
  * folder made on a PC (exefs/ or analysis/, extract/romfs, spirv/) still works when no file was picked.
@@ -133,15 +134,32 @@ public class Launcher extends Activity {
         }
     }
 
-    // The shaders were translated from this game file (ImportActivity writes spirv/import.txt last).
+    // A preparacao e vinculada ao URI selecionado e ao relatorio real do importador.
+    // Nunca aceitar simplesmente um arquivo antigo de outro jogo.
     boolean prepared() {
-        File note = new File(dataDir(), "spirv/import.txt");
-        if (!note.canRead()) return false;
-        try (BufferedReader r = new BufferedReader(new FileReader(note))) {
-            return gameName().equals(r.readLine());
+        String uri = gameUri();
+        if (uri == null || uri.isEmpty()) return false;
+        if (!uri.equals(prefs().getString("p4g_prepared_uri", ""))) return false;
+
+        File summary = new File(getCacheDir(), "import/spirv/summary.tsv");
+        if (!summary.isFile()) return false;
+
+        int total = -1, success = -1, failed = -1;
+        try (BufferedReader reader = new BufferedReader(new FileReader(summary))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] fields = line.trim().split("\t", -1);
+                if (fields.length != 2) continue;
+                int value = Integer.parseInt(fields[1]);
+                if ("total".equals(fields[0])) total = value;
+                else if ("sucesso".equals(fields[0])) success = value;
+                else if ("falhas".equals(fields[0])) failed = value;
+            }
         } catch (Exception e) {
+            Log.w("P4G-Launch", "Nao foi possivel ler summary.tsv", e);
             return false;
         }
+        return total > 0 && success == total && failed == 0;
     }
 
     String displayName(Uri uri) {
@@ -174,7 +192,8 @@ public class Launcher extends Activity {
             getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch (Exception ignored) {  // a provider without persistable grants: works while the app runs
         }
-        prefs().edit().putString("uri", uri.toString()).putString("name", name).apply();
+        prefs().edit().putString("uri", uri.toString()).putString("name", name)
+                .remove("p4g_prepared_uri").apply();
     }
 
     // prod.keys (and title.keys, when the dump needs it): copied into the app's own storage, never shared or logged.
@@ -252,7 +271,7 @@ public class Launcher extends Activity {
             }
             Intent launch = new Intent(this, Launcher.class).setAction(Intent.ACTION_MAIN);
             ShortcutInfo info = new ShortcutInfo.Builder(this, "picture_" + System.currentTimeMillis())
-                    .setShortLabel("P5R").setLongLabel("Persona 5 Royal").setIcon(Icon.createWithAdaptiveBitmap(icon))
+                    .setShortLabel("P4G").setLongLabel("Persona 4 Golden").setIcon(Icon.createWithAdaptiveBitmap(icon))
                     .setIntent(launch).build();
             sm.requestPinShortcut(info, null);
             tell(t("Icono", "Icon"), t("Acepta el aviso para poner el acceso directo con tu imagen en la pantalla de inicio. "
@@ -269,9 +288,12 @@ public class Launcher extends Activity {
         return new File(dataDir(), "exefs/main").canRead() || new File(dataDir(), "analysis/main.bin").canRead();
     }
 
-    // The build ID the port is made for (Persona 5 Royal 1.0.0, the base game): the start of exefs/main's module ID
+    // Build IDs conhecidos para exefs/main quando a inicializacao usar dados locais:
     // (NSO header +0x40). The native build refuses another (runtime main.cpp); say so here instead of closing.
-    static final String BUILD_ID = "708BCACA873EA32B";
+    static final String[] BUILD_IDS = {
+            "708BCACA873EA32B", "B78A03E489E5BD92",
+            "6E1F4CAE92A28C91", "2F2253ACD6BE5D87"
+    };
 
     // Null when exefs/main is missing or the right version, else its build ID.
     String wrongBuild() {
@@ -286,7 +308,9 @@ public class Launcher extends Activity {
         }
         StringBuilder hex = new StringBuilder();
         for (byte b : id) hex.append(String.format("%02X", b & 0xFF));
-        return hex.toString().equals(BUILD_ID) ? null : hex.toString();
+        String found = hex.toString();
+        for (String known : BUILD_IDS) if (known.equals(found)) return null;
+        return found;
     }
 
     @Override
@@ -364,7 +388,7 @@ public class Launcher extends Activity {
         root.setPadding(pad, pad, pad, pad);
 
         TextView title = new TextView(this);
-        title.setText("PERSONA 5 ROYAL");
+        title.setText("PERSONA 4 GOLDEN");
         title.setTextColor(Color.rgb(230, 0, 18));
         title.setTextSize(30);
         title.setTypeface(Typeface.DEFAULT_BOLD);
@@ -562,7 +586,13 @@ public class Launcher extends Activity {
                     else if (!prepared()) prepare();
                     else if (openGameForRuntime()) {
                         save();
-                        startActivity(new Intent(Launcher.this, android.app.NativeActivity.class));
+                        Log.i("P4G-Launch", "Iniciando NativeActivity do P4G");
+                        try {
+                            startActivity(new Intent(Launcher.this, android.app.NativeActivity.class));
+                        } catch (Exception e) {
+                            Log.e("P4G-Launch", "Falha ao iniciar NativeActivity", e);
+                            tell("Falha ao iniciar P4G", String.valueOf(e.getMessage()));
+                        }
                     } else {
                         tell(t("No se pudo abrir el juego", "The game could not be opened"), gameName());
                     }
@@ -620,21 +650,21 @@ public class Launcher extends Activity {
                     "Game: %s. It needs preparing: once, a few minutes.", gameName()));
             play.setText(t("Preparar el juego", "Prepare the game"));
         } else if (gameUri() != null) {
-            status.setText(Lang.f("Juego listo: %s", "Game ready: %s", gameName()));
-            play.setText(t("Jugar", "Play"));
+            status.setText(Lang.f("Shaders preparados: %s (runtime experimental)", "Shaders prepared: %s (experimental runtime)", gameName()));
+            play.setText("Testar inicializacao do P4G");
         } else if (!hasData()) {
-            status.setText(t("Elige el archivo de tu juego (.nsp o .xci de Persona 5 Royal 1.0.0) y tu prod.keys.",
-                    "Choose your game file (a Persona 5 Royal 1.0.0 .nsp or .xci) and your prod.keys."));
+            status.setText(t("Elige el archivo de tu juego (.nsp o .xci de Persona 4 Golden 1.0.0) y tu prod.keys.",
+                    "Choose your game file (a Persona 4 Golden 1.0.0 .nsp or .xci) and your prod.keys."));
             play.setText(t("Elegir el juego", "Choose the game"));
         } else if (wrongBuild() != null) {
-            status.setText(Lang.f("Almacenamiento interno/%s/exefs/main no es Persona 5 Royal 1.0.0 (build %s). Copia el "
+            status.setText(Lang.f("Almacenamiento interno/%s/exefs/main no es Persona 4 Golden 1.0.0 (build %s). Copia el "
                             + "exefs del juego base, sin la actualización.",
-                    "Internal storage/%s/exefs/main is not Persona 5 Royal 1.0.0 (build %s). Copy the exefs of the base "
+                    "Internal storage/%s/exefs/main is not Persona 4 Golden 1.0.0 (build %s). Copy the exefs of the base "
                             + "game, without the update.", DATA, wrongBuild()));
             play.setText(t("Volver a buscar", "Look again"));
         } else {
             status.setText(Lang.f("Datos listos: %s", "Data ready: %s", dataDir().getPath()));
-            play.setText(t("Jugar", "Play"));
+            play.setText("Testar inicializacao do P4G");
         }
     }
 
@@ -655,11 +685,9 @@ public class Launcher extends Activity {
     void askImport() {
         new AlertDialog.Builder(this)
                 .setTitle(t("Importar partidas", "Import saves"))
-                .setMessage(t("Elige un archivo ZIP o una carpeta con partidas de Persona 5 Royal (las carpetas DATA01, "
-                                + "DATA02... y SYSTEM, como las exporta JKSV o Checkpoint, o el ZIP que exporta este botón). "
+                .setMessage(t("Elige un archivo ZIP o una carpeta con partidas de Persona 4 Golden (por ejemplo, un ZIP exportado anteriormente). "
                                 + "Antes se guarda una copia de tus partidas actuales.",
-                        "Pick a ZIP file or a folder with Persona 5 Royal saves (the DATA01, DATA02... and SYSTEM folders, "
-                                + "as JKSV or Checkpoint export them, or the ZIP the Export button makes). Your current saves "
+                        "Pick a ZIP file or a folder with Persona 4 Golden saves (for example, a ZIP exported earlier). Your current saves "
                                 + "are copied aside first."))
                 .setPositiveButton(t("Archivo ZIP", "ZIP file"), new DialogInterface.OnClickListener() {
                     @Override
@@ -686,6 +714,10 @@ public class Launcher extends Activity {
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (request == PREPARE) {
+            if (result == RESULT_OK && gameUri() != null) {
+                prefs().edit().putString("p4g_prepared_uri", gameUri()).apply();
+                Log.i("P4G-Launch", "Preparacao concluida para URI selecionado");
+            }
             refresh();
             return;
         }
@@ -714,8 +746,8 @@ public class Launcher extends Activity {
                     : request == PICK_FOLDER ? SaveFiles.importTree(getContentResolver(), data.getData()) : null;
             if (r == null) {
                 tell(t("No hay partidas", "No saves found"),
-                        t("Ahí no encontré partidas de Persona 5 Royal: busca las carpetas DATA01, DATA02... o SYSTEM.",
-                                "No Persona 5 Royal saves there: look for the DATA01, DATA02... or SYSTEM folders."));
+                        t("Ahí no encontré partidas de Persona 4 Golden: busca las carpetas DATA01, DATA02... o SYSTEM.",
+                                "No Persona 4 Golden saves there: look for the DATA01, DATA02... or SYSTEM folders."));
                 return;
             }
             String slots = r.slots.isEmpty() ? t("solo ajustes del sistema", "system settings only")
@@ -843,15 +875,15 @@ public class Launcher extends Activity {
         try {
             File dl = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
             if (!dl.exists()) dl.mkdirs();
-            File out = new File(dl, "p5r-log.txt");
+            File out = new File(dl, "p4g-log.txt");
             StringBuilder sb = new StringBuilder();
-            sb.append("=== Persona 5 Royal Recomp Log Export ===\n");
+            sb.append("=== Persona 4 Golden Recomp Log Export ===\n");
             sb.append("Device: ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append("\n");
             sb.append("Android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n");
             sb.append("Date: ").append(new java.util.Date().toString()).append("\n\n");
 
             try {
-                Process p = Runtime.getRuntime().exec(new String[] {"logcat", "-d", "-s", "p5r:V", "DEBUG:V", "vulkan:V"});
+                Process p = Runtime.getRuntime().exec(new String[] {"logcat", "-d", "-s", "p4g:V", "DEBUG:V", "vulkan:V"});
                 try (BufferedReader br = new BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
                     String line;
                     while ((line = br.readLine()) != null) sb.append(line).append("\n");
@@ -873,12 +905,12 @@ public class Launcher extends Activity {
                 fw.write(sb.toString());
             }
 
-            Toast.makeText(this, t("Registros exportados a Download/p5r-log.txt",
-                    "Logs exported to Download/p5r-log.txt"), Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, t("Registros exportados a Download/p4g-log.txt",
+                    "Logs exported to Download/p4g-log.txt"), Toast.LENGTH_SHORT).show();
 
             Intent share = new Intent(Intent.ACTION_SEND);
             share.setType("text/plain");
-            share.putExtra(Intent.EXTRA_SUBJECT, "Persona 5 Royal Debug Log");
+            share.putExtra(Intent.EXTRA_SUBJECT, "Persona 4 Golden Debug Log");
             share.putExtra(Intent.EXTRA_TEXT, sb.toString());
             startActivity(Intent.createChooser(share, t("Compartir registros", "Share logs")));
         } catch (Exception e) {
