@@ -190,6 +190,37 @@ jobs:
             exit 1
           fi
 
+
+      - name: Compile glslang SPIR-V Builder
+        shell: bash
+        run: |
+          set -e
+
+          NDK="$ANDROID_HOME/ndk/28.2.13676358"
+          CXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++"
+
+          SRC="vita3k-source/external/glslang"
+
+          "$CXX" \
+            -std=c++23 \
+            -O2 \
+            -fPIC \
+            -I "$SRC" \
+            -I "$SRC/SPIRV" \
+            -c "$SRC/SPIRV/SpvBuilder.cpp" \
+            -o build-shader/objects/glslang_spv_builder.o \
+            > build-shader/logs/glslang_builder.log 2>&1 \
+            || {
+              cat build-shader/logs/glslang_builder.log
+              exit 1
+            }
+
+          file build-shader/objects/glslang_spv_builder.o
+
+          echo "SPIR-V Builder compiled for Android ARM64"
+
+
+
       # Nova etapa:
       # Tenta vincular os componentes em uma biblioteca
       # Android ARM64 sem permitir simbolos indefinidos.
