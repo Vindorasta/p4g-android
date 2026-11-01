@@ -1,148 +1,406 @@
-# Persona 5 Royal for Android (native port)
+# Persona 4 Golden for Android (Native Port)
 
-An Android app that runs **your own copy** of Persona 5 Royal (Nintendo Switch, version 1.0.0) natively on an arm64
-phone or tablet. The Switch's operating system services, its audio, video and input, and NVN (the Switch's graphics
-API) are reimplemented on Android, with Vulkan for the graphics. The game's own code runs directly on the phone's CPU:
-the Switch and Android phones share the same CPU architecture (AArch64).
+An experimental Android project designed to run **Persona 4 Golden (Nintendo Switch version)** natively on ARM64 smartphones and tablets.
 
-**No PC needed:** install the APK, pick your game file (`.nsp` or `.xci`) and your `prod.keys` on the phone, let it
-prepare the game once (a few minutes), and play. The game is read from your file as it is; nothing is extracted.
+The project uses a custom Nintendo Switch compatibility runtime, native ARM64 execution (NCE), Android system integrations, and Vulkan-based graphics.
+
+Because Nintendo Switch and modern ARM64 Android devices share the AArch64 instruction set, parts of the game's original executable can run directly on the device's CPU. The runtime reimplements the Nintendo Switch services and APIs required by the game.
+
+**No PC required for game preparation:** the Android application supports selecting a game dump and encryption keys directly on the phone.
+
+> [!WARNING]
+> **EXPERIMENTAL — NOT YET PLAYABLE**
+>
+> Persona 4 Golden is currently in active development.
+>
+> The application can recognize and load a supported game dump, initialize native modules, prepare shader data, and begin executing the game's original code.
+>
+> However, the game does **not yet reach the title screen or render gameplay**.
+>
+> Crashes and compatibility issues are expected. This repository should not currently be considered a playable Android port.
 
 > [!IMPORTANT]
-> **No game files are included, here or in the APK.** This repository and its releases hold no game code, assets,
-> shaders, keys or firmware. The APK is only the engine: it reads the game from your own dump. You need your own
-> legally dumped copy of the game (the base game, version 1.0.0) and your own `prod.keys`. How to dump them from your
-> console is **not** covered here. Please do not ask for game files or keys.
+> **No copyrighted game files are distributed.**
+>
+> This repository and its APK builds do not include Persona 4 Golden's original executables, assets, encryption keys, firmware, or other copyrighted game content.
+>
+> Users must provide their own legally obtained game dump and the necessary keys.
+>
+> Game files and encryption keys are not provided or linked here. Instructions for obtaining them are outside the scope of this project.
 
-Persona 5 Royal is © ATLUS / © SEGA. This is an unofficial fan project, not affiliated with or endorsed by ATLUS,
-SEGA or Nintendo.
+Persona 4 Golden is © ATLUS / © SEGA.
 
-## Install
+This is an unofficial fan-made technical project and is not affiliated with, sponsored by, or endorsed by ATLUS, SEGA, or Nintendo.
 
-1. Copy your **Persona 5 Royal 1.0.0** `.nsp` (or `.xci`) and your `prod.keys` to the phone (the Download folder is
-   fine). The base game only: not the update.
-2. Install **P5R** from the [Releases](../../releases) page (allow installing apps from your browser or file manager
-   when Android asks).
-3. Open it and allow "All files access" (for its folder `Internal storage/Persona 5 Royal`: settings, saves, shaders).
-4. **Game file → Choose**: pick your `.nsp`/`.xci`. **Keys → Choose**: pick your `prod.keys` (and `title.keys` too, if
-   your dump needs it; you can select both). The app keeps the keys in its private storage; they are not uploaded or
-   included in the APK.
-5. Press **Prepare the game**. Keep the app open: it checks the game and translates its ~30,000 shaders for your GPU
-   (about two minutes on a mid-range tablet; once).
-6. Press **Play**.
+---
 
-Keep the game file where it is: every start reads the game from it. Saves are kept in
-`Internal storage/Persona 5 Royal/user/save`; the home screen can import and export them. Mods (LayeredFS style) can be
-placed in `Internal storage/Persona 5 Royal/mods/<ModName>/romfs/...` (see [docs/MODS.md](docs/MODS.md)).
+## Installation
 
-### Options
+### Experimental Android builds
 
-Text language, resolution (360p, 480p, 720p, or 1080p), interface resolution, graphics (texture detail), frame rate
-cap (30, or 60 experimental), shadows, FPS counter, **Fullscreen (stretch)**, **Crowd NPCs** (toggle off to boost FPS in busy areas like Shibuya), **Post-processing / Bloom** (toggle off for lighter GPU load), **Touch controls** (show, size, opacity, L3/R3 buttons, and custom layout editor), **Touch stick & camera sensitivity** (50% to 250%), **Physical gamepad layout** (Nintendo vs Xbox/Android A/B and X/Y swap), **Import CPK** (for fan translations / language packs), and **Export logs** (generate and share debug logs directly from the device).
+1. Download the latest available APK from [GitHub Actions](../../actions/workflows/build-p4g.yml).
+2. Install the APK on an ARM64 Android device.
+3. Open the application and grant the required file permissions.
+4. Select your own Persona 4 Golden Nintendo Switch game dump.
+5. Select your own `prod.keys`.
+6. Run the game's preparation process.
+7. Use **Test P4G Startup** to test the current native runtime.
+
+**The startup test is intended for debugging, not gameplay.** At the current development stage, the game may show a blank screen, return to the launcher, or crash.
+
+The application supports exporting diagnostic logs, which are useful for identifying runtime compatibility issues.
+
+### Tested game version
+
+| Property | Value |
+|---|---|
+| Game | Persona 4 Golden |
+| Platform | Nintendo Switch |
+| Title ID | `010062B01525C000` |
+| Region | USA |
+| Tested version | Base game, v0 |
+| Build ID | `C433D980688380A642C086072F620928DF7D6320000000000000000000000000` |
+| Execution architecture | ARM64 / AArch64 |
+| Status | Experimental, not playable |
+
+Other game revisions and regions have not yet been validated.
+
+---
 
 ## Requirements
 
-- An arm64 Android phone or tablet with **Android 10 or newer** and **Vulkan 1.1**, 6 GB of RAM or more (8 GB
-  recommended).
-- Storage: the game file (about 15 GB) plus about 1 GB for the translated shaders and saves.
-- Your own dump of **Persona 5 Royal 1.0.0** (US `01005CA01580E000`, EU `01004B10157F2000`, JP `0100B880154FC000`, or Asia `01006BB00C6F0000`) and your console's `prod.keys`.
+The following hardware and software capabilities are relevant to development and testing:
 
-## Status
+- ARM64 Android smartphone or tablet.
+- Android system with native AArch64 execution support.
+- Vulkan-capable graphics hardware.
+- Sufficient memory for native module loading and runtime allocations.
+- Storage for the user's own Nintendo Switch game dump and generated preparation data.
+- User-provided game encryption keys.
 
-The no-PC flow (selecting the game and keys, preparing shaders, and launching from the NSP) has been verified on **one
-device** so far:
+### Development test device
 
-| Device | SoC / GPU | Results |
+| Device | Android | Result |
 |---|---|---|
-| Lenovo Tab M11 (Android 14, 8 GB) | Snapdragon 685 / Adreno 610, Vulkan 1.1 | menus 60 fps, 3D title ~14 fps, the casino ~20 fps |
+| Samsung Galaxy A35 5G (SM-A356E) | Android 16 | Game modules load and execution reaches `nnMain`; startup currently crashes |
 
-The Adreno 610 is a low-end GPU: on faster phones expect more. Other GPUs (Mali, PowerVR, Xclipse, newer Adreno) are
-untested. Reports are welcome (see [Reporting problems](#reporting-problems)).
+Minimum RAM requirements, graphics compatibility, and gameplay performance have **not yet been established**.
 
-What works: the menus, films (hardware VP9), sound, cutscenes in sync, battles, saving and loading, 30 or 60 fps cap,
-touch controls (movable) and game controllers, the text language of your choice.
+---
 
-Known limits: version 1.0.0 only (not the update); performance on low-end GPUs; the shadows option costs a lot on
-weak GPUs (off by default).
+## Development Status
 
-## How it works
+<escape>### Working or partially verified</escape>
 
-- **Native execution (the loader).** The APK reads `main` and `sdk` from your game file's ExeFS, maps and links them
-  as the Switch's loader would, and runs them on the phone's CPU (`runtime/src/nce/`). The few instructions that cannot
-  run on Android as they are get patched into small stubs: system calls (`svc`), the thread-pointer registers, and the
-  system counter. Calls into Switch system libraries go to the runtime's implementations.
-- **The game file, read in place.** The NSP/XCI is opened with your keys (`android/wonder/importer/nxgame.h`) and the
-  game's files are decrypted on the fly as the game reads them (`runtime/src/game_image.cpp`).
-- **Shaders** are translated once, on the phone, from the game's Maxwell shaders to SPIR-V with
-  [Ryujinx](https://github.com/Ryubing/Ryujinx)'s shader translator (MIT), compiled to a native Android library with
-  .NET NativeAOT (`libspirvharness.so`). The extraction is `games/p5r/import/`.
-- **The runtime** is the Switch runtime of
-  [Super Mario Bros. Wonder Recomp](https://github.com/BelmanteGu/SuperMarioWonderRecomp) (SwitchGamesRecomp, MIT,
-  by BelmanteGu / Projeto Belmante). It provides the kernel, the services, NVN on Vulkan, audio (AAudio), hardware video
-  decoding (MediaCodec) and touch controls. This port adds Persona 5 Royal's needs and the native loader.
+- Android launcher and game file selection.
+- User-provided key handling.
+- Recognition of the tested Persona 4 Golden NSP.
+- Reading the game's RomFS from its game image.
+- Loading the `main`, `sdk`, and `subsdk0` executable modules.
+- Resolving imports and relocating native modules.
+- Native AArch64 execution through the NCE runtime.
+- Initialization of several Nintendo Switch system services.
+- Mounting the game's RomFS and save directory.
+- Entering `nn::init::Start`.
+- Entering the game's `nnMain`.
+- Extracting GXP shader assets for experimental processing.
+- Experimental GXP-to-SPIR-V conversion pipeline.
+- Native debugging, crash reporting, and log export.
 
-The project started as a static recompilation (the game's code translated to C++), the upstream project's approach.
-That build is still there for debugging on Windows (`games/p5r/tools/build_pc.cmd`), but it needs your own
-recompiled game code, so it is private by nature. The Android APK is the native build (`NX_NCE`), which holds no game
-code and can be shared. `games/p5r/tools/prepare_data.ps1` still prepares a data folder on a PC, for that build or
-for testing.
+### Currently being investigated
 
-## Building the APK
+- Unresolved native imports.
+- Incomplete Nintendo Switch system service implementations.
+- Application and display layer initialization.
+- Null-pointer crashes during game startup.
+- Compatibility between the existing runtime and Persona 4 Golden's executable.
+- Shader and renderer integration.
+- GPU initialization and Vulkan presentation.
 
-On Windows, with the Android SDK (`ANDROID_HOME`, or Android Studio's default location; platform 35, build-tools
-35.0.0, NDK 28.2.13676358), a JDK 17+ (`JAVA_HOME`, or Android Studio's own), the Vulkan headers 1.4.357, and Docker
-Desktop (once, for the shader translator library):
-```powershell
-python -m venv private\venv; private\venv\Scripts\pip install cmake ninja
-git clone --depth 1 --branch v1.4.357 https://github.com/KhronosGroup/Vulkan-Headers private\third_party\Vulkan-Headers-1.4.357
-# the translator: Ryubing's source, then the library (NativeAOT for Android needs Linux: a Docker container)
-mkdir private\third_party\ryubing
-curl.exe -L -o private\third_party\ryubing.tar.gz https://codeberg.org/Software_arch/Ryubing/archive/a82350bb77.tar.gz
-tar -xzf private\third_party\ryubing.tar.gz -C private\third_party\ryubing --strip-components=1
-docker run --rm -v "${PWD}:/src" -w /src mcr.microsoft.com/dotnet/sdk:10.0 sh games/p5r/tools/build_harness_android.sh
-games\p5r\tools\build_android.cmd -Nce            # -> private\p5r\apk_nce\p5r.apk; -Install installs it with adb
+### Not yet verified
+
+- Title screen.
+- Main menu.
+- In-game graphics.
+- Audio playback.
+- Cutscenes.
+- Battles.
+- Saving and loading within gameplay.
+- Stable frame rates.
+- Touch and physical controller support during gameplay.
+- Complete gameplay.
+
+**Important:** successfully loading the game executable or processing shader files does not mean the game is playable.
+
+---
+
+## How It Works
+
+### Native Execution (NCE)
+
+The Android application loads the game's executable modules from the user's Nintendo Switch game dump.
+
+The runtime maps these modules into memory, applies relocations, resolves imported symbols, and begins executing their original ARM64 instructions.
+
+Some Nintendo Switch-specific operations require compatibility handling, including:
+
+- Supervisor calls (`SVC`).
+- Thread-local storage and thread-pointer behavior.
+- System timers and counters.
+- Kernel services.
+- Inter-process communication (IPC).
+- Application lifecycle management.
+
+The native execution implementation is located in:
+
+`runtime/src/nce/`
+
+### Nintendo Switch Runtime
+
+The project builds upon a Nintendo Switch compatibility runtime originally developed for other native game ports.
+
+It provides components for:
+
+- Memory management.
+- Kernel services.
+- File system access.
+- Account services.
+- System time.
+- Application management.
+- Input handling.
+- Display services.
+- Graphics compatibility.
+- Native execution and error reporting.
+
+Relevant source files include:
+
+```text
+runtime/src/main.cpp
+runtime/src/loader.cpp
+runtime/src/memory.cpp
+runtime/src/ipc.cpp
+runtime/src/hle_fs.cpp
+runtime/src/hle_vi.cpp
+runtime/src/svc_am.cpp
+runtime/src/svc_time.cpp
+runtime/src/nce/
 ```
-The APK is signed with your Android debug key (`%USERPROFILE%\.android\debug.keystore`; Android Studio makes it, or
-`keytool -genkeypair -keystore %USERPROFILE%\.android\debug.keystore -storepass android -keypass android -alias
-androiddebugkey -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -validity 10000`). Without `-Nce` the script
-builds the recompiled flavour, which needs your own recompiled game code in `private\p5r\gen` (see `docs/RECOMP.md`)
-and must never be shared.
 
-## Reporting problems
+### Game Files
 
-Open an issue with your phone's model, SoC/GPU, Android version and RAM, what you did and what happened, and the log:
+The runtime reads the user's game dump through the game image subsystem.
+
+The implementation includes support for locating executable modules and accessing the game's RomFS.
+
+Relevant code:
+
+```text
+runtime/src/game_image.cpp
+runtime/src/game_image.h
 ```
-adb logcat -s p5r:V > p5r-log.txt
+
+### Shader Preparation
+
+Persona 4 Golden contains shader-related data that the current preparation pipeline can extract and process.
+
+The project includes an experimental native library named:
+
+`libp4gshader.so`
+
+This library uses a GXP-to-SPIR-V conversion approach based on Vita3K's shader compiler.
+
+The preparation pipeline has been exercised with approximately **11,462 extracted GXP shader programs**.
+
+**This shader conversion is experimental.** GXP assets and Nintendo Switch NVN/Maxwell shaders are not interchangeable, and successful conversion does not establish that the resulting shaders can render the Switch version correctly.
+
+Additional work is required to establish a functioning graphics pipeline.
+
+Relevant code:
+
+```text
+games/p4g/import/
+games/p4g/import/p4g_shaders.cpp
 ```
-(run it before starting the game). Never attach game files, keys, or screenshots of copyrighted content beyond what
-the report needs.
 
-## En español
+---
 
-Una app de Android que ejecuta **tu propia copia** de Persona 5 Royal (Switch, versión 1.0.0) de forma nativa en un
-móvil o tablet arm64. **No hace falta PC.** El APK no lleva nada del juego: lo lee de tu propio archivo.
+## Current Startup Progress
 
-1. Copia al móvil tu `.nsp` (o `.xci`) de Persona 5 Royal 1.0.0 (el juego base, sin la actualización) y tu `prod.keys`
-   (por ejemplo a Descargas).
-2. Instala **P5R** desde [Releases](../../releases).
-3. Ábrelo y permite el acceso a todos los archivos.
-4. **Archivo del juego → Elegir**: tu `.nsp`/`.xci`. **Claves → Elegir**: tu `prod.keys`. La app guarda las claves en
-   su almacenamiento privado; no se suben ni se incluyen en el APK.
-5. Pulsa **Preparar el juego** y deja la app abierta: comprueba el juego y traduce sus shaders (unos dos minutos, una
-   sola vez).
-6. Pulsa **Jugar**.
+The native runtime has reached the game's original entry point.
 
-No borres ni muevas el archivo del juego: cada vez que juegas se lee de ahí. Puedes poner mods (estilo LayeredFS) en
-`Almacenamiento interno/Persona 5 Royal/mods/<Nombre>/romfs/...` (ver [docs/MODS.md](docs/MODS.md)). En **Icono → Elegir
-imagen** puedes crear un acceso directo con la imagen que quieras. No se proporcionan juegos ni claves.
+Example diagnostic output:
 
-## Credits and license
+```text
+p4g: main build ... recognized
 
-- Runtime: [SwitchGamesRecomp / Super Mario Bros. Wonder Recomp](https://github.com/BelmanteGu/SuperMarioWonderRecomp)
-  by BelmanteGu (Projeto Belmante), MIT.
-- Shader translation: Ryujinx's shader translator (Ryubing), MIT, built into the APK as a native library.
-- The native-execution idea is the one Switch emulators call NCE; this implementation is written for this runtime.
-- Like the upstream project, this port was written with a lot of AI assistance (Anthropic's Claude), directed and
-  tested by a human.
+loaded main
+loaded sdk
+loaded subsdk0
 
-MIT License, see [LICENSE](LICENSE).
+linked: 176 to HLE,
+41755 across modules,
+22 unresolved
+
+entering nn::init::Start
+
+sdk constructors: 112
+main constructors: 25
+
+p4g: runtime initialized
+entering nnMain
+
+fs: mounted app0:
+fs: mounted savedata0:
+
+p4g: CreateManagedDisplaySeparableLayer
+```
+
+The current startup failure is a native memory access error during initialization.
+
+```text
+CRASH: signal 11
+fault address 0x0
+```
+
+The immediate priority is identifying and fixing the missing runtime functionality responsible for this failure.
+
+No successful rendered gameplay frames have been confirmed.
+
+---
+
+## Project Structure
+
+```text
+.github/workflows/
+    Android and shader build workflows
+
+games/p4g/
+    Persona 4 Golden-specific code
+
+games/p4g/import/
+    Game preparation and shader processing
+
+games/p4g/java/
+    Android launcher
+
+runtime/src/
+    Nintendo Switch compatibility runtime
+
+runtime/src/nce/
+    Native ARM64 execution implementation
+```
+
+Additional components may change as development progresses.
+
+---
+
+## Building the Android APK
+
+The project uses GitHub Actions to build experimental Android packages.
+
+### Android APK
+
+Use the workflow:
+
+[Build P4G Android](../../actions/workflows/build-p4g.yml)
+
+### Native Shader Library
+
+The experimental shader conversion library is built through:
+
+[Build P4G Shader](../../actions/workflows/build-p4g-shader.yml)
+
+The Android build integrates the native runtime, launcher, and shader components.
+
+Check the workflow logs and artifacts for build results.
+
+A successful build does not guarantee successful game initialization.
+
+---
+
+## Reporting Problems
+
+Bug reports and diagnostic logs are welcome.
+
+When reporting an issue, include:
+
+- Device model.
+- Android version.
+- SoC and GPU.
+- RAM capacity.
+- Game region and version.
+- What happened during startup.
+- The exported `p4g-log.txt`.
+
+Please do not upload game dumps, encryption keys, firmware, or copyrighted assets.
+
+Reports involving new devices, different Android versions, or reproducible runtime failures are particularly useful.
+
+---
+
+## Development Goals
+
+The main objectives are:
+
+1. Resolve the remaining native imports and startup crashes.
+2. Complete the Nintendo Switch system services required by Persona 4 Golden.
+3. Initialize the game's graphics subsystem.
+4. Establish a working Vulkan rendering pipeline.
+5. Reach the title screen.
+6. Implement reliable input and audio support.
+7. Reach in-game rendering.
+8. Improve compatibility, stability, and performance.
+9. Support saving and loading.
+10. Work toward a fully playable Android experience.
+
+All goals are subject to technical feasibility and testing.
+
+---
+
+## Em Português
+
+### Persona 4 Golden para Android
+
+Este é um projeto experimental que busca executar a versão de Nintendo Switch de **Persona 4 Golden diretamente em dispositivos Android ARM64**, utilizando execução nativa (NCE).
+
+O objetivo é permitir que o próprio processador do celular execute o código ARM64 do jogo, enquanto um runtime fornece compatibilidade com os serviços do Nintendo Switch.
+
+**O projeto ainda está em desenvolvimento e não é jogável.**
+
+Atualmente, o aplicativo consegue reconhecer o jogo, carregar seus módulos executáveis, preparar determinados dados de shaders e iniciar a execução do código original.
+
+Entretanto, a inicialização ainda apresenta falhas antes de chegar à tela de título.
+
+### Como testar
+
+1. Baixe o APK experimental pelo GitHub Actions.
+2. Instale no Android.
+3. Selecione sua própria cópia do Persona 4 Golden para Nintendo Switch.
+4. Selecione suas próprias chaves necessárias.
+5. Execute a preparação do jogo.
+6. Utilize a opção de teste de inicialização.
+7. Exporte o log caso ocorra alguma falha.
+
+A aplicação ainda não oferece uma experiência de jogo funcional.
+
+**Nenhum jogo, arquivo protegido por direitos autorais ou chave de criptografia é distribuído neste repositório.**
+
+---
+
+## Credits and License
+
+This project is based on work from:
+
+- [Super Mario Bros. Wonder Recomp / SwitchGamesRecomp](https://github.com/BelmanteGu/SuperMarioWonderRecomp) — original compatibility runtime.
+- [Vita3K](https://github.com/Vita3K/Vita3K) — GXP shader compiler technology used by the experimental shader conversion component.
+- Nintendo Switch native execution and compatibility research from the open-source emulation community.
+
+The project includes modifications intended specifically for Persona 4 Golden on Android.
+
+Original third-party licenses and copyright notices must be preserved.
+
+See [LICENSE](LICENSE) and the applicable third-party notices for licensing information.
+
+---
+
+**Persona 4 Golden for Android is an experimental fan project. Development is ongoing, and playable functionality is not yet available.**
