@@ -50,16 +50,24 @@ jobs:
           done
 
 
-      - name: Download glslang headers
+
+      - name: Prepare Vita3K SPIR-V dependencies
         run: |
-          git clone --depth 1 \
-            https://github.com/KhronosGroup/glslang.git \
-            build-shader/glslang-source
+          set -e
+
+          git -C vita3k-source submodule update \
+            --init \
+            external/glslang \
+            external/SPIRV-Cross
 
           test -f \
-            build-shader/glslang-source/SPIRV/SpvBuilder.h
+            vita3k-source/external/glslang/SPIRV/SpvBuilder.h
 
-          echo "glslang headers ready"
+          test -f \
+            vita3k-source/external/SPIRV-Cross/spirv_glsl.hpp
+
+          echo "Vita3K glslang and SPIRV-Cross ready"
+
 
 
       - name: Compile all Vita3K shader sources
@@ -114,7 +122,8 @@ jobs:
               -O2 \
               -fPIC \
               -I "$OUT/third_party" \
-              -I "$OUT/glslang-source" \
+              -I vita3k-source/external/glslang \
+              -I vita3k-source/external/SPIRV-Cross \
               -I vita3k-source/vita3k/shader/include \
               -I vita3k-source/vita3k/util/include \
               -I vita3k-source/vita3k/gxm/include \
