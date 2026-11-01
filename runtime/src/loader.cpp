@@ -266,20 +266,35 @@ void hle_invoke(CPU& c, size_t index) {
 
     const Thunk& th = g_thunks[index];
 
-    if (g_trace)
-        log("hle %s", th.name.c_str());
+    log(
+        "p4g: HLE enter name=%s lr=%s x0=0x%llX x1=0x%llX",
+        th.name.c_str(),
+        describe(c.x[30]).c_str(),
+        (unsigned long long)c.x[0],
+        (unsigned long long)c.x[1]
+    );
 
     const char* prev = t_missing_name;
     t_missing_name = th.name.c_str();
+
 
     KThread* kt = self_thread();
 
     if (kt)
         kt->hle.store(t_missing_name, std::memory_order_relaxed);
 
+    
     th.fn(c);
 
+    log(
+        "p4g: HLE exit name=%s x0=0x%llX x1=0x%llX",
+        th.name.c_str(),
+        (unsigned long long)c.x[0],
+        (unsigned long long)c.x[1]
+    );
+
     t_missing_name = prev;
+
 
     if (kt)
         kt->hle.store(prev, std::memory_order_relaxed);
