@@ -35,9 +35,67 @@ ServiceRegistrar r_pctl_r("pctl:r", [] { return make("pctl:r", pctl); });
 
 ServiceRegistrar r_lm("lm", [] {
     return make("lm", [](Service& s) {
-        s.cmds[0] = [](IpcCtx& c) { c.push_object(make("ILogger")); return 0u; };  // OpenLogger
+        s.cmds[0] = [](IpcCtx& c) {
+            auto logger = make("ILogger", [](Service& l) {
+                l.cmds[0] = [](IpcCtx& c) {
+                    Buffer b = c.in_buf(0);
+                    if (!b.addr || b.size < 0x18)
+                        return 0u;
+
+                    const uint8_t* data =
+                        reinterpret_cast<const uint8_t*>(b.addr);
+
+                    const size_t size =
+                        size_t(std::min<uint64_t>(b.size, 65536));
+
+                    size_t pos = 0x18;
+
+                    auto read_leb = [&](uint32_t& value) {
+                        value = 0;
+                        for (int i = 0; i < 5 && pos < size; ++i) {
+                            uint8_t byte = data[pos++];
+                            value |= uint32_t(byte & 0x7F) << (7 * i);
+                            if (!(byte & 0x80))
+                                return true;
+                        }
+                        return false;
+                    };
+
+                    while (pos < size) {
+                        uint32_t key = 0, length = 0;
+
+                        if (!read_leb(key) ||
+                            !read_leb(length) ||
+                            length > size - pos)
+                            break;
+
+                        if (key == 2 && length) {
+                            int count = int(std::min<uint32_t>(
+                                length, 700
+                            ));
+
+                            log(
+                                "p4g: GUEST ERROR: %.*s",
+                                count,
+                                reinterpret_cast<const char*>(
+                                    data + pos
+                                )
+                            );
+                        }
+
+                        pos += length;
+                    }
+
+                    return 0u;
+                };
+            });
+
+            c.push_object(logger);
+            return 0u;
+        };
     });
 });
+
 
 ServiceRegistrar r_apm("apm", [] {
     return make("apm", [](Service& s) {
