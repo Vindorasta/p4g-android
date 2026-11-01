@@ -220,6 +220,22 @@ jobs:
           echo "SPIR-V Builder compiled for Android ARM64"
 
 
+      - name: Download SDL3 headers
+        run: |
+          set -e
+
+          git clone --depth 1 \
+            --branch release-3.2.0 \
+            https://github.com/libsdl-org/SDL.git \
+            build-shader/sdl3-source
+
+          test -f \
+            build-shader/sdl3-source/include/SDL3/SDL_iostream.h
+
+          echo "SDL3 headers ready"
+
+
+
       - name: Compile remaining shader dependencies
         shell: bash
         run: |
@@ -297,6 +313,7 @@ jobs:
                   -O2 \
                   -fPIC \
                   -I "$OUT/third_party" \
+                  -I "$OUT/sdl3-source/include" \
                   -I "$ROOT/external/glslang" \
                   -I "$ROOT/external/SPIRV-Cross" \
                   -I "$ROOT/vita3k/shader/include" \
