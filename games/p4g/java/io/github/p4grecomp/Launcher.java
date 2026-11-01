@@ -239,7 +239,8 @@ public class Launcher extends Activity {
     boolean openGameForRuntime() {
         try {
             ParcelFileDescriptor f = getContentResolver().openFileDescriptor(Uri.parse(gameUri()), "r");
-            if (f == null) return false;
+            if (f == null) return false;        
+            Os.setenv("NX_TRACE_FS", "1", true);
             Os.setenv("NX_GAME_FD", String.valueOf(f.detachFd()), true);
             Os.setenv("NX_GAME_NAME", gameName(), true);
             Os.setenv("NX_KEYS", keysFile(this, "prod.keys").getPath(), true);
