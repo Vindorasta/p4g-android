@@ -41,13 +41,51 @@ ServiceRegistrar r_lm("lm", [] {
 
 ServiceRegistrar r_apm("apm", [] {
     return make("apm", [](Service& s) {
-        s.cmds[0] = [](IpcCtx& c) { c.push_object(make("ISession")); return 0u; };  // OpenSession
-        s.cmds[1] = [](IpcCtx& c) {  // GetPerformanceMode: boost (docked), normal with NX_HANDHELD (svc_am.cpp)
-            c.push<uint32_t>(std::getenv("NX_HANDHELD") ? 0 : 1);
+        s.cmds[0] = [](IpcCtx& c) {
+            auto session = make("ISession", [](Service& session) {
+                // SetPerformanceConfiguration
+                session.cmds[0] = [](IpcCtx& c) {
+                    uint32_t mode = c.arg<uint32_t>(0);
+                    uint32_t config = c.arg<uint32_t>(4);
+
+                    log(
+                        "apm: SetPerformanceConfiguration mode=%u config=0x%X",
+                        mode,
+                        config
+                    );
+
+                    return 0u;
+                };
+
+                // GetPerformanceConfiguration
+                session.cmds[1] = [](IpcCtx& c) {
+                    uint32_t mode = c.arg<uint32_t>(0);
+                    uint32_t config = mode == 0 ? 0x00010000u : 0x00020000u;
+
+                    c.push<uint32_t>(config);
+
+                    log(
+                        "apm: GetPerformanceConfiguration mode=%u config=0x%X",
+                        mode,
+                        config
+                    );
+
+                    return 0u;
+                };
+            });
+
+            c.push_object(session);
+            return 0u;
+        };
+
+        // GetPerformanceMode
+        s.cmds[1] = [](IpcCtx& c) {
+            c.push<uint32_t>(std::getenv("NX_HANDHELD") ? 0u : 1u);
             return 0u;
         };
     });
 });
+
 
 ServiceRegistrar r_aoc("aoc:u", [] {
     return make("aoc:u", [](Service& s) {
