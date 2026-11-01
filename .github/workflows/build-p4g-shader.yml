@@ -86,7 +86,8 @@ jobs:
           CXX="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++"
 
           "$CXX" \
-            -std=c++20 \
+            -std=c++23 \
+            -include utility \
             -DSPDLOG_FMT_EXTERNAL \
             -I build-shader/third_party \
             -O2 \
