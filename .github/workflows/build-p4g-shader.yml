@@ -49,6 +49,19 @@ jobs:
             fi
           done
 
+
+      - name: Download glslang headers
+        run: |
+          git clone --depth 1 \
+            https://github.com/KhronosGroup/glslang.git \
+            build-shader/glslang-source
+
+          test -f \
+            build-shader/glslang-source/SPIRV/SpvBuilder.h
+
+          echo "glslang headers ready"
+
+
       - name: Compile all Vita3K shader sources
         shell: bash
         run: |
@@ -101,6 +114,7 @@ jobs:
               -O2 \
               -fPIC \
               -I "$OUT/third_party" \
+              -I "$OUT/glslang-source" \
               -I vita3k-source/vita3k/shader/include \
               -I vita3k-source/vita3k/util/include \
               -I vita3k-source/vita3k/gxm/include \
