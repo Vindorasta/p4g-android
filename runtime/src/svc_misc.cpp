@@ -87,6 +87,37 @@ ServiceRegistrar r_apm("apm", [] {
 });
 
 
+ServiceRegistrar r_hid("hid", [] {
+    return make("hid", [](Service& s) {
+        // CreateAppletResource
+        s.cmds[0] = [](IpcCtx& c) {
+            auto resource = make("IAppletResource", [](Service& r) {
+                // GetSharedMemoryHandle
+                r.cmds[0] = [](IpcCtx& c) {
+                    static auto memory =
+                        make_shared_memory("hid", 0x40000);
+
+                    uint32_t handle = handle_add(memory);
+                    c.out_copy.push_back(handle);
+
+                    log(
+                        "p4g: hid GetSharedMemoryHandle -> %u",
+                        handle
+                    );
+
+                    return 0u;
+                };
+            });
+
+            c.push_object(resource);
+            log("p4g: hid CreateAppletResource");
+            return 0u;
+        };
+    });
+});
+
+
+
 ServiceRegistrar r_aoc("aoc:u", [] {
     return make("aoc:u", [](Service& s) {
         s.cmds[2] = [](IpcCtx& c) { c.push<uint32_t>(0); return 0u; };  // CountAddOnContent (old)
