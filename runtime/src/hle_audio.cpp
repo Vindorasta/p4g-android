@@ -181,7 +181,10 @@ void GetReleasedAudioOutBuffer(CPU& c) {
 // What the output is, for games that ask (P5R's CRI mixer sizes its buffers from these; the sdk's own versions read
 // the fields a real OpenDefaultAudioOut fills, which ours does not): 48 kHz, stereo, PcmInt16 (SampleFormat 2).
 void GetAudioOutSampleRate(CPU& c) { c.x[0] = 48000; }
-void GetAudioOutChannelCount(CPU& c) { c.x[0] = 2; }
+void GetAudioOutChannelCount(CPU& c) {
+    c.x[0] = 6;
+    log("p4g: AudioOut channel count = 6");
+}
 void GetAudioOutSampleFormat(CPU& c) { c.x[0] = 2; }
 void GetAudioOutBufferDataSize(CPU& c) { c.x[0] = ld<uint64_t>(c.x[0] + 16); }
 void GetAudioOutName(CPU& c) {
