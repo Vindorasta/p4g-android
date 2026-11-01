@@ -360,6 +360,76 @@ jobs:
           fi
 
 
+      - name: Build final SPIR-V and SDL3 dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NDK="$ANDROID_HOME/ndk/28.2.13676358"
+          TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
+          CXX="$TOOLCHAIN/bin/aarch64-linux-android29-clang++"
+
+          OUT="build-shader"
+          GLSLANG="vita3k-source/external/glslang"
+          SDL="$OUT/sdl3-source"
+
+          echo "Compiling SPIR-V instruction definitions..."
+
+          test -f "$GLSLANG/SPIRV/doc.cpp"
+
+          "$CXX" \
+            -std=c++23 \
+            -O2 \
+            -fPIC \
+            -I "$GLSLANG" \
+            -c "$GLSLANG/SPIRV/doc.cpp" \
+            -o "$OUT/objects/glslang_doc.o" \
+            > "$OUT/logs/glslang_doc.log" 2>&1 || {
+              cat "$OUT/logs/glslang_doc.log"
+              exit 1
+            }
+
+          echo "Building SDL3 for Android ARM64..."
+
+          cmake -S "$SDL" \
+            -B "$OUT/sdl3-build" \
+            -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-29 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DSDL_SHARED=OFF \
+            -DSDL_STATIC=ON \
+            -DSDL_TESTS=OFF \
+            -DSDL_EXAMPLES=OFF \
+            > "$OUT/logs/sdl3-configure.log" 2>&1 || {
+              tail -n 100 "$OUT/logs/sdl3-configure.log"
+              exit 1
+            }
+
+          cmake --build "$OUT/sdl3-build" \
+            --parallel 4 \
+            > "$OUT/logs/sdl3-build.log" 2>&1 || {
+              tail -n 100 "$OUT/logs/sdl3-build.log"
+              exit 1
+            }
+
+          SDL_LIB=$(find "$OUT/sdl3-build" \
+            -type f -name 'libSDL3.a' \
+            -print -quit)
+
+          test -n "$SDL_LIB"
+          test -s "$SDL_LIB"
+
+          echo "SDL_LIB=$SDL_LIB" >> "$GITHUB_ENV"
+
+          echo "SPIR-V definitions compiled."
+          echo "SDL3 ARM64 static library built."
+          echo "SDL3: $SDL_LIB"
+
+
+
       # Nova etapa:
       # Tenta vincular os componentes em uma biblioteca
       # Android ARM64 sem permitir simbolos indefinidos.
@@ -394,10 +464,14 @@ jobs:
             -Wl,--no-undefined \
             -Wl,--error-limit=0 \
             -Wl,-z,max-page-size=16384 \
-            -o "$LIB" \
+            -o "$LIB" \         
             "$OUT"/objects/*.o \
+            -Wl,--start-group \
+            "$SDL_LIB" \
+            -Wl,--end-group \
             -llog \
             -ldl \
+            -landroid \
             > "$OUT/logs/link.log" 2>&1
 
           RC=$?
