@@ -264,25 +264,40 @@ const ShaderInfo* shader_for(uint64_t code_host, uint64_t control) {
         else
             log("nvn: no %sresults.tsv: storage buffers of translated shaders cannot be bound", dir.c_str());
     }
-    std::unique_ptr<ShaderInfo>& slot = k.by_hash[hash];
-    std::string bytes;
-    if (!read_whole(dir + hash + ".spv", bytes) || bytes.size() % 4 || bytes.empty()) {
-        log("nvn: shader %s (code %#x bytes, control %llx): no %s%s.spv", hash.c_str(), c.code_size,
-            (unsigned long long)control, dir.c_str(), hash.c_str());
-        if (std::getenv("NX_DUMP_SHADER_MISSES")) {  // for translating shaders the offline inventory missed
-            std::string out = plat::data_root() + "/shader_misses/";
-            plat::make_dirs(out);
-            if (FILE* f = plat::fopen_utf8(out + "code_" + hash + ".bin", "wb")) {
-                std::fwrite(code, 1, c.code_size, f);
-                std::fclose(f);
-            }
-            if (FILE* f = plat::fopen_utf8(out + "ctrl_" + hash + ".bin", "wb")) {
-                std::fwrite(ctrl, 1, 0x880, f);
-                std::fclose(f);
-            }
+std::unique_ptr<ShaderInfo>& slot = k.by_hash[hash];
+std::string bytes;
+
+if (!read_whole(dir + hash + ".spv", bytes) ||
+    bytes.size() % 4 || bytes.empty()) {
+
+    log("nvn: shader %s (code %#x bytes, control %llx): no %s%s.spv",
+        hash.c_str(), c.code_size,
+        (unsigned long long)control, dir.c_str(), hash.c_str());
+
+    static size_t dumped_misses = 0;
+
+    if (std::getenv("NX_DUMP_SHADER_MISSES") ||
+        dumped_misses < 32) {
+
+        if (dumped_misses < 32)
+            ++dumped_misses;
+
+        std::string out = plat::data_root() + "/shader_misses/";
+        plat::make_dirs(out);
+
+        if (FILE* f = plat::fopen_utf8(out + "code_" + hash + ".bin", "wb")) {
+            std::fwrite(code, 1, c.code_size, f);
+            std::fclose(f);
         }
-        return nullptr;
+
+        if (FILE* f = plat::fopen_utf8(out + "ctrl_" + hash + ".bin", "wb")) {
+            std::fwrite(ctrl, 1, 0x880, f);
+            std::fclose(f);
+        }
     }
+
+    return nullptr;
+}
     std::vector<uint32_t> words(bytes.size() / 4);
     std::memcpy(words.data(), bytes.data(), bytes.size());
     auto res = k.resources.find(hash);
