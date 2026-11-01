@@ -142,8 +142,8 @@ jobs:
           grep -Eq '[[:space:]]p4g_shader_api_version$' \
             "$OUT/shader-symbols.txt"
 
-          grep -Eq '[[:space:]]p4g_shader_test_file$' \
-            "$OUT/shader-symbols.txt"
+          grep -Eq '[[:space:]]p4g_shader_convert$' \
+           "$OUT/shader-symbols.txt"
 
           echo "Checking runtime dependencies..."
 
