@@ -1,5 +1,6 @@
 
 #include <dirent.h>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <jni.h>
 #include <sys/stat.h>
@@ -17,46 +18,22 @@
 
 // Persona 4 Golden Android
 //
-// Importa o NSP/XCI do usuario e extrai os programas
-// GXP do data.cpk.
+// Etapa 62.06:
+// - Abrir NSP/XCI
+// - Extrair programas GXP
+// - Carregar libp4gshader.so
+// - Verificar a interface C do Vita3K
 //
-// O tradutor Maxwell do P5R nao e compativel
-// diretamente com os programas GXP do P4G.
-//
-// Fases:
-// 0 = parado ou erro
-// 1 = abrindo jogo
-// 2 = extraindo shaders
-// 3 = reservado para futura traducao GXP
-// 4 = finalizando
-// 5 = concluido
-//
-// A importacao permanece incompleta ate existir
-// um tradutor GXP e integracao com o runtime.
+// A conversao para SPIR-V sera ativada somente
+// quando houver uma API que devolva o resultado
+// e permita verificar sua validade.
 
 namespace {
 
-bool is_supported_title(uint64_t t) {
-    uint64_t base = t & ~0xFFFull;
-    return base == 0x010062B01525C000ull;
-}
+constexpr uint64_t P4G_TITLE_ID =
+    0x010062B01525C000ull;
 
-bool is_supported_build(const char* id) {
-    const char* known[] = {
-        "708BCACA873EA32B", // US 1.0.0
-        "B78A03E489E5BD92", // EU 1.0.0
-        "6E1F4CAE92A28C91", // JP 1.0.0
-        "2F2253ACD6BE5D87", // Asia 1.0.0
-    };
-
-    for (const char* k : known) {
-        if (std::strcmp(id, k) == 0) {
-            return true;
-        }
-    }
-
-    return false;
-}
+constexpr int SHADER_API_VERSION = 1;
 
 std::atomic<int> g_phase{0};
 std::atomic<int> g_done{0};
@@ -65,59 +42,192 @@ std::atomic<int> g_total{0};
 std::mutex g_error_lock;
 std::string g_error;
 
-void set_error(const std::string& e) {
+void set_error(const std::string& value) {
     std::lock_guard<std::mutex> lock(g_error_lock);
-    g_error = e;
+    g_error = value;
 }
 
-std::string jstr(JNIEnv* env, jstring s) {
-    if (!s) {
-        return {};
-    }
-
-    const char* c = env->GetStringUTFChars(s, nullptr);
-
-    std::string out = c ? c : "";
-
-    if (c) {
-        env->ReleaseStringUTFChars(s, c);
-    }
-
-    return out;
-}
-
-void remove_tree(const std::string& path) {
-    if (DIR* d = opendir(path.c_str())) {
-        while (dirent* e = readdir(d)) {
-            std::string n = e->d_name;
-
-            if (n == "." || n == "..") {
-                continue;
-            }
-
-            std::string p = path + "/" + n;
-
-            struct stat st{};
-
-            if (lstat(p.c_str(), &st) == 0 &&
-                S_ISDIR(st.st_mode)) {
-                remove_tree(p);
-            } else {
-                unlink(p.c_str());
-            }
-        }
-
-        closedir(d);
-    }
-
-    rmdir(path.c_str());
-}
-
-int fail(const std::string& e) {
-    set_error(e);
+int fail(const std::string& message) {
+    set_error(message);
     g_phase = 0;
     return 1;
 }
+
+std::string jstr(JNIEnv* env, jstring value) {
+    if (!value) {
+        return {};
+    }
+
+    const char* chars =
+        env->GetStringUTFChars(value, nullptr);
+
+    if (!chars) {
+        return {};
+    }
+
+    std::string result(chars);
+
+    env->ReleaseStringUTFChars(value, chars);
+
+    return result;
+}
+
+bool is_supported_title(uint64_t title_id) {
+    return (title_id & ~0xFFFull) == P4G_TITLE_ID;
+}
+
+bool is_supported_build(const char* build_id) {
+    const char* known[] = {
+        "708BCACA873EA32B",
+        "B78A03E489E5BD92",
+        "6E1F4CAE92A28C91",
+        "2F2253ACD6BE5D87"
+    };
+
+    for (const char* id : known) {
+        if (std::strcmp(build_id, id) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void remove_tree(const std::string& path) {
+    struct stat root{};
+
+    if (lstat(path.c_str(), &root) != 0) {
+        return;
+    }
+
+    if (!S_ISDIR(root.st_mode)) {
+        unlink(path.c_str());
+        return;
+    }
+
+    DIR* directory = opendir(path.c_str());
+
+    if (!directory) {
+        return;
+    }
+
+    while (dirent* entry = readdir(directory)) {
+        std::string name = entry->d_name;
+
+        if (name == "." || name == "..") {
+            continue;
+        }
+
+        std::string child = path + "/" + name;
+
+        struct stat info{};
+
+        if (lstat(child.c_str(), &info) != 0) {
+            continue;
+        }
+
+        if (S_ISDIR(info.st_mode)) {
+            remove_tree(child);
+        } else {
+            unlink(child.c_str());
+        }
+    }
+
+    closedir(directory);
+    rmdir(path.c_str());
+}
+
+// --------------------------------------------------
+// Interface dinamica do recompilador Vita3K
+// --------------------------------------------------
+
+using ShaderApiVersion = int (*)();
+
+struct ShaderLibrary {
+    void* handle = nullptr;
+    ShaderApiVersion version = nullptr;
+
+    ~ShaderLibrary() {
+        if (handle) {
+            dlclose(handle);
+        }
+    }
+
+    ShaderLibrary() = default;
+
+    ShaderLibrary(const ShaderLibrary&) = delete;
+    ShaderLibrary& operator=(const ShaderLibrary&) =
+        delete;
+};
+
+bool load_shader_library(
+    ShaderLibrary& library,
+    std::string& error
+) {
+    error.clear();
+
+    dlerror();
+
+    library.handle = dlopen(
+        "libp4gshader.so",
+        RTLD_NOW | RTLD_LOCAL
+    );
+
+    if (!library.handle) {
+        const char* message = dlerror();
+
+        error =
+            "P4G: falha ao carregar "
+            "libp4gshader.so: ";
+
+        error += message ? message : "erro desconhecido";
+
+        return false;
+    }
+
+    dlerror();
+
+    void* symbol = dlsym(
+        library.handle,
+        "p4g_shader_api_version"
+    );
+
+    const char* lookup_error = dlerror();
+
+    if (lookup_error || !symbol) {
+        error =
+            "P4G: interface p4g_shader_api_version "
+            "nao encontrada: ";
+
+        error += lookup_error
+            ? lookup_error
+            : "simbolo ausente";
+
+        return false;
+    }
+
+    library.version =
+        reinterpret_cast<ShaderApiVersion>(symbol);
+
+    const int version = library.version();
+
+    if (version != SHADER_API_VERSION) {
+        error =
+            "P4G: versao incompativel "
+            "da API de shaders. Esperada: " +
+            std::to_string(SHADER_API_VERSION) +
+            ", encontrada: " +
+            std::to_string(version);
+
+        return false;
+    }
+
+    return true;
+}
+
+// --------------------------------------------------
+// Importacao do Persona 4 Golden
+// --------------------------------------------------
 
 int run(
     int nsp_fd,
@@ -128,7 +238,8 @@ int run(
     const std::string& work_dir,
     int jobs
 ) {
-    // Reservados para a futura etapa de conversao.
+    // Parametros reservados para o processamento
+    // e cache dos shaders em etapas posteriores.
     (void)data_dir;
     (void)jobs;
 
@@ -138,66 +249,77 @@ int run(
 
     set_error("");
 
-    // ------------------------------------------
-    // ETAPA 1: Abrir NSP/XCI e validar o jogo
-    // ------------------------------------------
+    if (nsp_fd < 0) {
+        return fail(
+            "P4G: descritor NSP/XCI invalido"
+        );
+    }
 
-    std::vector<nxi::InputFile> in;
+    // ETAPA 1: abrir o jogo.
 
-    in.push_back({
+    std::vector<nxi::InputFile> inputs;
+
+    inputs.push_back({
         nsp_name,
         nsp_fd
     });
 
-    int kfd = open(
+    int keys_fd = open(
         keys.c_str(),
         O_RDONLY | O_CLOEXEC
     );
 
-    if (kfd < 0) {
-        return fail("P4G: nao foi possivel ler prod.keys");
+    if (keys_fd < 0) {
+        return fail(
+            "P4G: nao foi possivel ler prod.keys"
+        );
     }
 
-    in.push_back({
+    inputs.push_back({
         "prod.keys",
-        kfd
+        keys_fd
     });
 
-    int tfd = title_keys.empty()
-        ? -1
-        : open(
+    int title_fd = -1;
+
+    if (!title_keys.empty()) {
+        title_fd = open(
             title_keys.c_str(),
             O_RDONLY | O_CLOEXEC
         );
+    }
 
-    if (tfd >= 0) {
-        in.push_back({
+    if (title_fd >= 0) {
+        inputs.push_back({
             "title.keys",
-            tfd
+            title_fd
         });
     }
 
-    std::string err;
+    std::string error;
 
     auto game = nxi::GameImage::open(
-        in,
+        inputs,
         0,
-        err
+        error
     );
 
-    close(kfd);
+    close(keys_fd);
 
-    if (tfd >= 0) {
-        close(tfd);
+    if (title_fd >= 0) {
+        close(title_fd);
     }
 
     if (!game) {
-        return fail(err);
+        return fail(
+            error.empty()
+                ? "P4G: falha ao abrir NSP/XCI"
+                : error
+        );
     }
 
-    // Verificar Title ID do Persona 4 Golden.
     if (!is_supported_title(game->title_id())) {
-        char title_id[32];
+        char title_id[32] = {};
 
         std::snprintf(
             title_id,
@@ -216,44 +338,45 @@ int run(
         );
     }
 
-    // Verificar a existencia do executavel main.
     auto main_it = game->exefs().find("main");
 
     if (main_it == game->exefs().end() ||
         main_it->second.size() < 0x48) {
         return fail(
-            "P4G: o arquivo do jogo nao possui main"
+            "P4G: executavel main ausente "
+            "ou invalido"
         );
     }
 
-    // Identificar Build ID.
-    char id[17] = {};
+    char build_id[17] = {};
 
     for (int i = 0; i < 8; ++i) {
         std::snprintf(
-            id + 2 * i,
+            build_id + i * 2,
             3,
             "%02X",
             main_it->second[0x40 + i]
         );
     }
 
-    if (!is_supported_build(id)) {
-        // Versoes desconhecidas nao sao bloqueadas
-        // nesta fase experimental.
-    }
+    const bool known_build =
+        is_supported_build(build_id);
 
-    // ------------------------------------------
-    // ETAPA 2: Extrair e validar shaders GXP
-    // ------------------------------------------
+    // Builds desconhecidos permanecem permitidos
+    // nesta fase experimental.
+    (void)known_build;
+
+    // ETAPA 2: extrair os shaders GXP.
 
     g_phase = 2;
     g_done = 0;
     g_total = 0;
 
-    // Limpar apenas o diretorio de trabalho
-    // desta tentativa de importacao.
-    if (work_dir.empty() || work_dir == "/") {
+    if (work_dir.empty() ||
+        work_dir == "/" ||
+        work_dir == "." ||
+        work_dir == ".." ||
+        work_dir[0] != '/') {
         return fail(
             "P4G: diretorio de trabalho invalido"
         );
@@ -271,63 +394,63 @@ int run(
     const std::string extracted =
         work_dir + "/shaders";
 
-    long blocks = p4g::extract_shaders(
+    const long blocks = p4g::extract_shaders(
         *game,
         extracted,
         [](int done, int total) {
             g_done = done;
             g_total = total;
         },
-        err
+        error
     );
 
     if (blocks < 0) {
         return fail(
-            err.empty()
+            error.empty()
                 ? "P4G: falha ao extrair shaders GXP"
-                : err
+                : error
         );
     }
 
     if (blocks == 0) {
         return fail(
-            "P4G: nenhum programa GXP foi extraido"
+            "P4G: nenhum programa GXP extraido"
         );
     }
 
-    // ------------------------------------------
-    // ETAPA 3: Traducao GXP para Vulkan
-    // ------------------------------------------
-    //
-    // IMPORTANTE:
-    //
-    // Nao chamar libspirvharness.so aqui.
-    //
-    // Essa biblioteca implementa a traducao
-    // dos shaders Maxwell do P5R e espera
-    // arquivos code.bin, ctrl.bin e manifests
-    // especificos daquele formato.
-    //
-    // Os shaders do P4G estao no formato GXP.
-    //
-    // A traducao GXP para SPIR-V ainda precisa
-    // ser implementada e integrada ao runtime.
-    //
-    // Os arquivos extraidos sao preservados
-    // para diagnostico e desenvolvimento.
-    //
-    // Nao criar um diretorio spirv falso.
-    // Nao indicar que o jogo esta pronto.
+    // ETAPA 3: verificar a biblioteca ARM64.
 
-    g_done = static_cast<int>(blocks);
-    g_total = static_cast<int>(blocks);
+    g_phase = 3;
+    g_done = 0;
+    g_total = 1;
+
+    ShaderLibrary shader_library;
+
+    if (!load_shader_library(
+            shader_library,
+            error
+        )) {
+        return fail(error);
+    }
+
+    g_done = 1;
+
+    // A biblioteca foi carregada e a versao
+    // de sua interface foi confirmada.
+    //
+    // Ainda nao houve conversao GXP -> SPIR-V.
+    // Nao declarar importacao concluida.
 
     return fail(
         "P4G: " +
         std::to_string(blocks) +
-        " programas GXP extraidos e validados. "
-        "Traducao GXP para Vulkan/SPIR-V "
-        "ainda nao implementada. "
+        " programas GXP extraidos. "
+        "libp4gshader.so carregada com sucesso. "
+        "API Vita3K v" +
+        std::to_string(SHADER_API_VERSION) +
+        " confirmada. "
+        "Teste de traducao GXP para SPIR-V "
+        "ainda pendente. "
         "Arquivos em: " +
         extracted
     );
@@ -365,24 +488,24 @@ Java_io_github_p4grecomp_Importer_progress(
     JNIEnv* env,
     jclass
 ) {
-    int v[3] = {
+    jint values[3] = {
         g_phase.load(),
         g_done.load(),
         g_total.load()
     };
 
-    jintArray a = env->NewIntArray(3);
+    jintArray result = env->NewIntArray(3);
 
-    if (a) {
+    if (result) {
         env->SetIntArrayRegion(
-            a,
+            result,
             0,
             3,
-            v
+            values
         );
     }
 
-    return a;
+    return result;
 }
 
 JNIEXPORT jstring JNICALL
