@@ -2,8 +2,6 @@
 
 **0.2.0 Beta** · ARM64 · Vulkan · English app interface
 
-<img src="android/res/drawable-nodpi/p4g_icon_image.png" alt="P4G app icon" width="96" height="96">
-
 P4G is an unofficial Android port of the Nintendo Switch version of **Persona 4 Golden**. It uses native ARM64 execution and a compatibility runtime that translates the game's NVN graphics commands to Vulkan.
 
 Game preparation runs directly on the phone. Select your own game dump and keys, prepare the game, and launch it from the main menu.
