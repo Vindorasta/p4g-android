@@ -1,7 +1,5 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#141414" android:pathData="M28,28 L80,28 Q86,28 86,34 L86,74 Q86,80 80,80 L28,80 Q22,80 22,74 L22,34 Q22,28 28,28 Z"/>
-    <path android:fillColor="#FAFAF2" android:pathData="M31,37 L77,37 L77,70 L31,70 Z"/>
-    <path android:fillColor="#141414" android:pathData="M36,42 L72,42 L72,65 L36,65 Z"/>
-    <path android:fillColor="#FFE000" android:pathData="M47,45 L47,62 L63,53.5 Z"/>
-    <path android:fillColor="#141414" android:pathData="M34,85 L41,85 L41,91 L34,91 Z M45,85 L52,85 L52,91 L45,91 Z M56,85 L63,85 L63,91 L56,91 Z M67,85 L74,85 L74,91 L67,91 Z"/>
-</vector>
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:insetLeft="16.666667%" android:insetTop="16.666667%"
+    android:insetRight="16.666667%" android:insetBottom="16.666667%">
+    <bitmap android:src="@drawable/p4g_icon_image" android:gravity="fill" android:filter="true" />
+</inset>
