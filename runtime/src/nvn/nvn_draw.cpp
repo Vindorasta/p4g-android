@@ -554,7 +554,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     static bool sprite_scene_seen = false;
     if (!sprite_scene_seen && vs->hash == "937df4e3272e6853") {
         sprite_scene_seen = true;
-        log("p4g: sprite texture capture v1 armed (96 images, 16 million pixels maximum)");
+        log("p4g: sprite texture capture v2 armed (96 images per batch; file capture_sprites resets budget)");
     }
     std::vector<const ShaderInfo*> swapped;  // NX_SWAP_FS / NX_SKIP_FS (nvn_draw_trace.cpp)
     if (!debug_shader_overrides(shaders, fs, swapped)) return false;
@@ -650,18 +650,35 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     build_sets(cb, *shaders, layout);
     // Read source artwork automatically after uploads, without changing its
     // coordinates. Captures identify assets for a later targeted correction.
-    if (plat::kDiagnostics && sprite_scene_seen && vs->hash == "547d293498cbedcf" && fs &&
-        (fs->hash == "7247e449c951a72f" || fs->hash == "a988505474266a8c")) {
+    if (plat::kDiagnostics && sprite_scene_seen && fs &&
+        (vs->hash == "547d293498cbedcf" || vs->hash == "ec20aad1520546db")) {
         static std::set<std::string> sprite_sources, sprite_content;
         static uint64_t sprite_pixels = 0;
-        if (sprite_content.size() < 96 && sprite_pixels < 16'000'000ull) {
+        static unsigned sprite_batch_images = 0, sprite_batch = 0;
+        static uint64_t sprite_next_check = 0;
+        if (g_frame.load() >= sprite_next_check) {
+            sprite_next_check = g_frame.load() + 30;
+            const std::string trigger = plat::data_root() + "/capture_sprites";
+            if (FILE* file = plat::fopen_utf8(trigger, "rb")) {
+                std::fclose(file);
+                std::remove(trigger.c_str());
+                sprite_batch_images = 0;
+                sprite_pixels = 0;
+                ++sprite_batch;
+                // Retain already captured resources so menus and fonts do not
+                // consume the next batch again. Files keep unique identifiers.
+                log("p4g: sprite capture batch %u reset at frame=%llu; known sources retained",
+                    sprite_batch, (unsigned long long)g_frame.load());
+            }
+        }
+        if (sprite_batch_images < 96 && sprite_pixels < 16'000'000ull) {
             for (const auto& resolved : g_textures.resolved) {
-                if (sprite_content.size() >= 96) break;
+                if (sprite_batch_images >= 96) break;
                 Texture* tx = resolved.texture ? get<Texture>(resolved.texture) : nullptr;
                 GpuImage* img = resolved.texture ? image_of(resolved.texture) : nullptr;
                 if (!tx || !img || !img->uploaded || img->rendered || !img->image ||
                     !(img->aspect & VK_IMAGE_ASPECT_COLOR_BIT) || img->layout == VK_IMAGE_LAYOUT_UNDEFINED ||
-                    img->width < 32 || img->height < 32 || img->width > 1024 || img->height > 1024)
+                    img->width < 16 || img->height < 16 || img->width > 2048 || img->height > 2048)
                     continue;
                 const uint64_t pixels = uint64_t(img->width) * img->height;
                 if (sprite_pixels + pixels > 16'000'000ull) continue;
@@ -681,16 +698,17 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                 g_snap_layer = g_snap_level = 0;
                 debug_snapshot(cb, *img, tag);
                 sprite_pixels += pixels;
+                ++sprite_batch_images;
                 float projection[4] = {};
                 const Range& uniform = g_state.uniforms[0][0];
                 if (uniform.address && uniform.size >= sizeof projection)
                     if (const uint8_t* data = guest_bytes(uniform.address))
                         std::memcpy(projection, data, sizeof projection);
-                log("p4g: sprite asset %llx frame=%llu source=%s %ux%u fs=%s fingerprint=%s c3=(%g,%g,%g,%g)",
+                log("p4g: sprite asset %llx frame=%llu source=%s %ux%u vs=%s fs=%s fingerprint=%s c3=(%g,%g,%g,%g)",
                     (unsigned long long)tag, (unsigned long long)g_frame.load(), identity,
-                    img->width, img->height, fs->hash.c_str(), fingerprint.c_str(),
+                    img->width, img->height, vs->hash.c_str(), fs->hash.c_str(), fingerprint.c_str(),
                     projection[0], projection[1], projection[2], projection[3]);
-                if (sprite_content.size() == 96)
+                if (sprite_batch_images == 96)
                     log("p4g: sprite texture capture limit reached");
             }
         }
