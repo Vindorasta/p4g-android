@@ -195,7 +195,7 @@ bool load_shader_library(
     if (!library.handle) {
         const char* detail = dlerror();
 
-        error = "P4G: erro carregando libp4gshader.so: ";
+        error = "P4G: could not load libp4gshader.so: ";
         error += detail ? detail : "desconhecido";
         return false;
     }
@@ -209,16 +209,16 @@ bool load_shader_library(
     const char* version_error = dlerror();
 
     if (version_error || !library.version) {
-        error = "P4G: p4g_shader_api_version ausente";
+        error = "P4G: missing p4g_shader_api_version";
         return false;
     }
 
     const int version = library.version();
 
     if (version != SHADER_API_VERSION) {
-        error = "P4G: API de shaders incompatível: ";
+        error = "P4G: incompatible shader API: ";
         error += std::to_string(version);
-        error += " (esperada: 2)";
+        error += " (expected: 2)";
         return false;
     }
 
@@ -231,7 +231,7 @@ bool load_shader_library(
     const char* convert_error = dlerror();
 
     if (convert_error || !library.convert) {
-        error = "P4G: p4g_shader_convert ausente";
+        error = "P4G: missing p4g_shader_convert";
         return false;
     }
 
@@ -272,7 +272,7 @@ bool read_pack_index(
     std::ifstream file(dir + "/" + pack + ".tsv");
 
     if (!file) {
-        error = "P4G: indice ausente: " + pack;
+        error = "P4G: missing index: " + pack;
         return false;
     }
 
@@ -280,7 +280,7 @@ bool read_pack_index(
 
     if (!std::getline(file, line) ||
         line != "nome\toffset\ttamanho") {
-        error = "P4G: cabecalho TSV invalido: " + pack;
+        error = "P4G: invalid TSV header: " + pack;
         return false;
     }
 
@@ -304,7 +304,7 @@ bool read_pack_index(
         if (a == std::string::npos ||
             b == std::string::npos ||
             line.find('\t', b + 1) != std::string::npos) {
-            error = "P4G: linha TSV invalida em " + pack;
+            error = "P4G: invalid TSV line in " + pack;
             return false;
         }
 
@@ -325,7 +325,7 @@ bool read_pack_index(
             ) ||
             entry.size == 0 ||
             entry.size > MAX_GXP_SIZE) {
-            error = "P4G: registro TSV invalido em " + pack;
+            error = "P4G: invalid TSV record in " + pack;
             return false;
         }
 
@@ -333,7 +333,7 @@ bool read_pack_index(
     }
 
     if (!file.eof() && file.fail()) {
-        error = "P4G: erro lendo indice " + pack;
+        error = "P4G: could not read index " + pack;
         return false;
     }
 
@@ -509,7 +509,7 @@ int run(
     set_message("");
 
     if (nsp_fd < 0) {
-        return fail("P4G: arquivo do jogo invalido");
+        return fail("P4G: invalid game file");
     }
 
     std::vector<nxi::InputFile> inputs;
@@ -522,7 +522,7 @@ int run(
     );
 
     if (keys_fd < 0) {
-        return fail("P4G: prod.keys nao encontrado");
+        return fail("P4G: prod.keys not found");
     }
 
     inputs.push_back({"prod.keys", keys_fd});
@@ -551,20 +551,20 @@ int run(
     if (!game) {
         return fail(
             error.empty()
-                ? "P4G: falha ao abrir o jogo"
+                ? "P4G: could not open the game"
                 : error
         );
     }
 
     if (!is_supported_title(game->title_id())) {
-        return fail("P4G: Title ID nao corresponde ao jogo");
+        return fail("P4G: Title ID does not match the game");
     }
 
     const auto main_it = game->exefs().find("main");
 
     if (main_it == game->exefs().end() ||
         main_it->second.size() < 0x48) {
-        return fail("P4G: executavel main invalido");
+        return fail("P4G: invalid main executable");
     }
 
     if (work_dir.empty() ||
@@ -580,7 +580,7 @@ int run(
                 3,
                 "/.."
             ) == 0) {
-        return fail("P4G: diretorio de trabalho invalido");
+        return fail("P4G: invalid working directory");
     }
 
     // ETAPA 2 - Extrair os programas GXP.
@@ -590,7 +590,7 @@ int run(
     remove_tree(work_dir);
 
     if (!make_directory(work_dir)) {
-        return fail("P4G: falha criando diretorio de trabalho");
+        return fail("P4G: could not create working directory");
     }
 
     const std::string extracted =
@@ -609,7 +609,7 @@ int run(
     if (blocks <= 0) {
         return fail(
             error.empty()
-                ? "P4G: nenhum GXP extraido"
+                ? "P4G: no GXP extracted"
                 : error
         );
     }
@@ -629,7 +629,7 @@ int run(
         work_dir + "/spirv";
 
     if (!make_directory(output_dir)) {
-        return fail("P4G: falha criando pasta SPIR-V");
+        return fail("P4G: could not create SPIR-V folder");
     }
 
     const char* packs[] = {
@@ -660,8 +660,8 @@ int run(
                 std::numeric_limits<int>::max()
             )) {
         return fail(
-            "P4G: indices GXP nao correspondem "
-            "a quantidade extraida"
+            "P4G: GXP indices do not match "
+            "the extracted count"
         );
     }
 
@@ -685,8 +685,8 @@ int run(
 
             if (!make_directory(pack_output)) {
                 return fail(
-                    "P4G: falha criando pasta SPIR-V "
-                    "para " + entry.pack
+                    "P4G: could not create SPIR-V folder "
+                    "for " + entry.pack
                 );
             }
         }
@@ -750,7 +750,7 @@ int run(
 
     if (!write_report(report_path, report)) {
         return fail(
-            "P4G: falha salvando relatorio de conversao"
+            "P4G: could not save conversion report"
         );
     }
 
@@ -764,16 +764,16 @@ int run(
             output_dir + "/summary.tsv",
             summary
         )) {
-        return fail("P4G: falha salvando resumo SPIR-V");
+        return fail("P4G: could not save SPIR-V summary");
     }
 
     if (failed > 0) {
         return fail(
-            "P4G: conversao parcial. " +
+            "P4G: partial conversion. " +
             std::to_string(success) +
-            " GXP convertidos; " +
+            " GXP converted; " +
             std::to_string(failed) +
-            " falharam. Relatorio: " +
+            " failed. Report: " +
             report_path
         );
     }
@@ -785,9 +785,9 @@ int run(
     set_message(
         "P4G: " +
         std::to_string(success) +
-        " programas GXP convertidos para SPIR-V. "
-        "Validacao estrutural basica concluida. "
-        "Execucao do jogo ainda nao implementada."
+        " GXP programs converted to SPIR-V. "
+        "Basic structural validation complete. "
+        "Game execution has not been implemented."
     );
 
     return 0;

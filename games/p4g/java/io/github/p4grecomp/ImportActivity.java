@@ -34,7 +34,7 @@ public class ImportActivity extends Activity {
         root.setBackgroundColor(P4gTheme.BACKGROUND);
         root.setPadding(dp(32), dp(32), dp(32), dp(32));
         TextView title = new TextView(this);
-        title.setText("Preparando P4G");
+        title.setText("Preparing P4G");
         title.setTextColor(P4gTheme.YELLOW);
         title.setTextSize(26);
         title.setTypeface(Typeface.DEFAULT_BOLD);
@@ -57,7 +57,7 @@ public class ImportActivity extends Activity {
     }
     void fail(String message) {
         status.setText(message);
-        new AlertDialog.Builder(this).setTitle("Preparação não concluída").setMessage(message)
+        new AlertDialog.Builder(this).setTitle("Preparation failed").setMessage(message)
             .setPositiveButton("OK", (d, w) -> { setResult(RESULT_CANCELED); finish(); })
             .setOnCancelListener(d -> { setResult(RESULT_CANCELED); finish(); }).show();
     }
@@ -71,9 +71,9 @@ public class ImportActivity extends Activity {
 
         if (uriString == null || uriString.isEmpty()) {
             status.setText(
-                "Nenhum arquivo de jogo selecionado."
+                "No game file selected."
             );
-            fail("Nenhum arquivo de jogo selecionado.");
+            fail("No game file selected.");
             return;
         }
 
@@ -96,7 +96,7 @@ public class ImportActivity extends Activity {
         running = true;
 
 
-        status.setText("Abrindo o jogo...");
+        status.setText("Opening the game...");
 
         new Thread(new Runnable() {
             @Override
@@ -111,7 +111,7 @@ public class ImportActivity extends Activity {
                 ) {
                     if (pfd == null) {
                         throw new IOException(
-                            "Nao foi possivel abrir o NSP/XCI"
+                            "Could not open the NSP/XCI"
                         );
                     }
 
@@ -158,12 +158,12 @@ public class ImportActivity extends Activity {
                         if (isFinishing() || isDestroyed()) return;
                         if (result == 0) {
                             bar.setProgress(1000);
-                            status.setText("Preparação concluída.");
-                            Toast.makeText(ImportActivity.this, "Preparação concluída", Toast.LENGTH_LONG).show();
+                            status.setText("Preparation complete.");
+                            Toast.makeText(ImportActivity.this, "Preparation complete", Toast.LENGTH_LONG).show();
                             setResult(RESULT_OK);
                             finish();
                         } else {
-                            fail("Preparação incompleta:\n\n" + message);
+                            fail("Preparation incomplete:\n\n" + message);
                         }
                     }
                 });
@@ -202,16 +202,16 @@ public class ImportActivity extends Activity {
 
                 if (phase == 2) {
                     status.setText(
-                        "Extraindo shaders (" +
-                        done + " de " + total + ")..."
+                        "Extracting shaders (" +
+                        done + " of " + total + ")..."
                     );
                 } else if (phase == 3) {
                     status.setText(
-                        "Processando shaders (" +
-                        done + " de " + total + ")..."
+                        "Processing shaders (" +
+                        done + " of " + total + ")..."
                     );
                 } else if (phase == 4) {
-                    status.setText("Finalizando...");
+                    status.setText("Finishing...");
                 }
 
                 ui.postDelayed(this, 500);

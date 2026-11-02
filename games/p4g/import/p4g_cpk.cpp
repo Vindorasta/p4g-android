@@ -78,7 +78,7 @@ bool prepare_utf_table(
     std::string& error
 ) {
     if (data.size() < 32) {
-        error = "CPK: tabela UTF muito pequena";
+        error = "CPK: UTF table too small";
         return false;
     }
 
@@ -93,7 +93,7 @@ bool prepare_utf_table(
     }
 
     if (std::memcmp(data.data(), "@UTF", 4) != 0) {
-        error = "CPK: assinatura UTF invalida";
+        error = "CPK: invalid UTF signature";
         return false;
     }
 
@@ -120,13 +120,13 @@ bool prepare_utf_table(
     if (rows > data.size() ||
         strings > data.size() ||
         binary > data.size()) {
-        error = "CPK: offsets UTF invalidos";
+        error = "CPK: invalid UTF offsets";
         return false;
     }
 
     if (columns == 0 ||
         (row_count != 0 && row_size == 0)) {
-        error = "CPK: dimensoes UTF invalidas";
+        error = "CPK: invalid UTF dimensions";
         return false;
     }
 
@@ -134,7 +134,7 @@ bool prepare_utf_table(
         uint64_t(row_count) * row_size;
 
     if (table_bytes > data.size() - rows) {
-        error = "CPK: linhas UTF fora dos limites";
+        error = "CPK: UTF rows out of bounds";
         return false;
     }
 
@@ -185,7 +185,7 @@ bool read_utf_columns(
 
     if (data.size() < 32 ||
         std::memcmp(data.data(), "@UTF", 4) != 0) {
-        error = "CPK: tabela UTF invalida";
+        error = "CPK: invalid UTF table";
         return false;
     }
 
@@ -202,14 +202,14 @@ bool read_utf_columns(
 
     if (rows_offset > data.size() ||
         strings_offset > data.size()) {
-        error = "CPK: offsets UTF invalidos";
+        error = "CPK: invalid UTF offsets";
         return false;
     }
 
     for (uint16_t i = 0; i < count; ++i) {
         if (pos > rows_offset ||
             rows_offset - pos < 5) {
-            error = "CPK: coluna UTF truncada";
+            error = "CPK: truncated UTF column";
             return false;
         }
 
@@ -227,7 +227,7 @@ bool read_utf_columns(
                 strings_offset,
                 name_offset,
                 col.name)) {
-            error = "CPK: nome de coluna invalido";
+            error = "CPK: invalid column name";
             return false;
         }
 
@@ -239,7 +239,7 @@ bool read_utf_columns(
 
             if (size == 0 ||
                 size > rows_offset - pos) {
-                error = "CPK: constante UTF invalida";
+                error = "CPK: invalid UTF constant";
                 return false;
             }
 
@@ -248,7 +248,7 @@ bool read_utf_columns(
 
         } else if (col.storage != 0x10 &&
                    col.storage != 0x50) {
-            error = "CPK: armazenamento UTF desconhecido";
+            error = "CPK: unknown UTF storage";
             return false;
         }
 
@@ -345,19 +345,19 @@ bool read_cpk_block(
 
     if (offset > cpk.size ||
         cpk.size - offset < 16) {
-        error = "CPK: cabecalho fora dos limites";
+        error = "CPK: header out of bounds";
         return false;
     }
 
     uint8_t header[16] = {};
 
     if (game.read(cpk, offset, header, 16) != 16) {
-        error = "CPK: falha ao ler cabecalho";
+        error = "CPK: could not read header";
         return false;
     }
 
     if (std::memcmp(header, magic, 4) != 0) {
-        error = "CPK: assinatura de bloco invalida";
+        error = "CPK: invalid block signature";
         return false;
     }
 
@@ -371,7 +371,7 @@ bool read_cpk_block(
         size > MAX_TABLE ||
         size > cpk.size - start ||
         size > std::numeric_limits<size_t>::max()) {
-        error = "CPK: tamanho de tabela invalido";
+        error = "CPK: invalid table size";
         return false;
     }
 
@@ -384,7 +384,7 @@ bool read_cpk_block(
             size
         ) != size) {
         output.clear();
-        error = "CPK: falha ao ler tabela";
+        error = "CPK: could not read table";
         return false;
     }
 
@@ -437,7 +437,7 @@ bool unpack_crilayla(
     output.clear();
     if (input.size() < 0x110 ||
         std::memcmp(input.data(), "CRILAYLA", 8) != 0) {
-        error = "P4G: cabecalho CRILAYLA ausente";
+        error = "P4G: missing CRILAYLA header";
         return false;
     }
 
@@ -447,7 +447,7 @@ bool unpack_crilayla(
     if (total != expected_size || total > MAX_SHADER_BYTES ||
         compressed_body > input.size() - 0x110 ||
         compressed_body + 0x110 != input.size()) {
-        error = "P4G: tamanhos CRILAYLA inconsistentes";
+        error = "P4G: inconsistent CRILAYLA sizes";
         return false;
     }
 
@@ -462,13 +462,13 @@ bool unpack_crilayla(
     while (write > 0x100) {
         uint32_t flag = 0;
         if (!bits.get(1, flag)) {
-            error = "P4G: fluxo CRILAYLA truncado";
+            error = "P4G: truncated CRILAYLA stream";
             return false;
         }
         if (!flag) {
             uint32_t literal = 0;
             if (!bits.get(8, literal)) {
-                error = "P4G: literal CRILAYLA truncado";
+                error = "P4G: truncated CRILAYLA literal";
                 return false;
             }
             output[--write] = static_cast<uint8_t>(literal);
@@ -477,7 +477,7 @@ bool unpack_crilayla(
 
         uint32_t distance_bits = 0;
         if (!bits.get(13, distance_bits)) {
-            error = "P4G: referencia CRILAYLA truncada";
+            error = "P4G: truncated CRILAYLA reference";
             return false;
         }
         const size_t distance = static_cast<size_t>(distance_bits) + 3;
@@ -486,7 +486,7 @@ bool unpack_crilayla(
         for (unsigned width : widths) {
             uint32_t part = 0;
             if (!bits.get(width, part)) {
-                error = "P4G: comprimento CRILAYLA truncado";
+                error = "P4G: truncated CRILAYLA length";
                 return false;
             }
             length += part;
@@ -499,12 +499,12 @@ bool unpack_crilayla(
             uint32_t part = 0;
             do {
                 if (!bits.get(8, part)) {
-                    error = "P4G: extensao CRILAYLA truncada";
+                    error = "P4G: truncated CRILAYLA extension";
                     return false;
                 }
                 length += part;
                 if (length > output.size()) {
-                    error = "P4G: comprimento CRILAYLA invalido";
+                    error = "P4G: invalid CRILAYLA length";
                     return false;
                 }
             } while (part == 255);
@@ -512,14 +512,14 @@ bool unpack_crilayla(
 
         if (length > write - 0x100 ||
             distance > output.size() - write) {
-            error = "P4G: referencia CRILAYLA fora dos limites";
+            error = "P4G: CRILAYLA reference out of bounds";
             return false;
         }
         for (uint64_t j = 0; j < length; ++j) {
             const size_t dest = --write;
             const size_t source = dest + distance;
             if (source >= output.size()) {
-                error = "P4G: origem CRILAYLA invalida";
+                error = "P4G: invalid CRILAYLA source";
                 return false;
             }
             output[dest] = output[source];
@@ -560,7 +560,7 @@ bool list_cpk_files(
     }
 
     if (columns.empty()) {
-        error = "P4G: nenhuma coluna UTF encontrada";
+        error = "P4G: no UTF column found";
         return false;
     }
 
@@ -577,7 +577,7 @@ bool list_cpk_files(
     if (row_count == 0 ||
         row_offset > header.size() ||
         row_size > header.size() - row_offset) {
-        error = "CPK: primeira linha UTF invalida";
+        error = "CPK: invalid first UTF row";
         return false;
     }
 
@@ -594,7 +594,7 @@ bool list_cpk_files(
         const size_t n = utf_value_size(col.type);
 
         if (n == 0) {
-            error = "CPK: tipo UTF desconhecido";
+            error = "CPK: unknown UTF type";
             return false;
         }
 
@@ -603,7 +603,7 @@ bool list_cpk_files(
         if (col.storage == 0x50) {
             if (pos > row_end ||
                 n > row_end - pos) {
-                error = "CPK: valor UTF fora da linha";
+                error = "CPK: UTF value outside row";
                 return false;
             }
 
@@ -630,7 +630,7 @@ bool list_cpk_files(
                 value_pos,
                 col.type,
                 value)) {
-            error = "CPK: offset UTF invalido";
+            error = "CPK: invalid UTF offset";
             return false;
         }
 
@@ -644,13 +644,13 @@ bool list_cpk_files(
     }
 
     if (!has_toc || !has_content) {
-        error = "CPK: colunas de offset ausentes";
+        error = "CPK: missing offset columns";
         return false;
     }
 
     if (toc >= cpk.size ||
         content >= cpk.size) {
-        error = "CPK: offsets fora de data.cpk";
+        error = "CPK: offsets outside data.cpk";
         return false;
     }
 
@@ -683,7 +683,7 @@ bool list_cpk_files(
     }
 
     if (toc_columns.empty()) {
-        error = "P4G: nenhuma coluna encontrada no TOC";
+        error = "P4G: no column found in TOC";
         return false;
     }
 
@@ -692,7 +692,7 @@ bool list_cpk_files(
 
     // Etapas 61.36-61.40: percorrer o TOC e verificar os seis shaders.
     if (file_count == 0) {
-        error = "P4G: TOC vazio";
+        error = "P4G: empty TOC";
         return false;
     }
 
@@ -707,7 +707,7 @@ bool list_cpk_files(
         toc_row_size == 0 ||
         uint64_t(file_count) >
             (toc_data.size() - toc_row_start) / toc_row_size) {
-        error = "P4G: linhas do TOC fora dos limites";
+        error = "P4G: TOC rows out of bounds";
         return false;
     }
 
@@ -746,14 +746,14 @@ bool list_cpk_files(
         for (const auto& col : toc_columns) {
             const size_t n = utf_value_size(col.type);
             if (n == 0) {
-                error = "P4G: tipo de coluna TOC desconhecido";
+                error = "P4G: unknown TOC column type";
                 return false;
             }
 
             size_t value_pos = 0;
             if (col.storage == 0x50) {
                 if (cursor > row_end || n > row_end - cursor) {
-                    error = "P4G: linha TOC truncada: " + std::to_string(row);
+                    error = "P4G: truncated TOC row: " + std::to_string(row);
                     return false;
                 }
                 value_pos = cursor;
@@ -763,7 +763,7 @@ bool list_cpk_files(
             } else if (col.storage == 0x10) {
                 continue;
             } else {
-                error = "P4G: armazenamento TOC desconhecido";
+                error = "P4G: unknown TOC storage";
                 return false;
             }
 
@@ -771,7 +771,7 @@ bool list_cpk_files(
                 if (col.type != 0xA ||
                     value_pos > toc_data.size() ||
                     4 > toc_data.size() - value_pos) {
-                    error = "P4G: campo de nome invalido no TOC";
+                    error = "P4G: invalid name field in TOC";
                     return false;
                 }
                 const uint32_t str_offset =
@@ -779,7 +779,7 @@ bool list_cpk_files(
                 std::string value;
                 if (!read_utf_string(
                         toc_data, strings_offset, str_offset, value)) {
-                    error = "P4G: string invalida na linha " +
+                    error = "P4G: invalid string in row " +
                             std::to_string(row);
                     return false;
                 }
@@ -795,7 +795,7 @@ bool list_cpk_files(
                 uint64_t value = 0;
                 if (!read_utf_integer(
                         toc_data, value_pos, col.type, value)) {
-                    error = "P4G: valor numerico invalido na linha " +
+                    error = "P4G: invalid numeric value in row " +
                             std::to_string(row);
                     return false;
                 }
@@ -830,18 +830,18 @@ bool list_cpk_files(
             continue;
         }
         if (!has_offset || !has_size || !has_extract_size) {
-            error = "P4G: metadados incompletos: " + file_name;
+            error = "P4G: incomplete metadata: " + file_name;
             return false;
         }
         if (file_offset > cpk.size - file_base ||
             file_size > cpk.size - file_base - file_offset) {
-            error = "P4G: offset/tamanho fora do CPK: " + file_name;
+            error = "P4G: offset/size outside CPK: " + file_name;
             return false;
         }
 
         if (file_size == 0 || file_size > MAX_SHADER_BYTES ||
             extract_size == 0 || extract_size > MAX_SHADER_BYTES) {
-            error = "P4G: tamanho invalido: " + file_name;
+            error = "P4G: invalid size: " + file_name;
             return false;
         }
 
@@ -856,8 +856,8 @@ bool list_cpk_files(
     }
 
     if (found_count != target_count) {
-        error = "P4G: shaders encontrados " +
-                std::to_string(found_count) + "/6. Ausentes:";
+        error = "P4G: shaders found " +
+                std::to_string(found_count) + "/6. Missing:";
         for (size_t i = 0; i < target_count; ++i) {
             if (!found[i]) {
                 error += " ";
@@ -887,13 +887,13 @@ bool read_cpk_file(
         file.extract_size > MAX_SHADER_BYTES ||
         file.offset > cpk.size ||
         file.size > cpk.size - file.offset) {
-        error = "P4G: tamanho/offset invalido: " + file.path;
+        error = "P4G: invalid size/offset: " + file.path;
         return false;
     }
 
     std::vector<uint8_t> packed(static_cast<size_t>(file.size));
     if (game.read(cpk, file.offset, packed.data(), file.size) != file.size) {
-        error = "P4G: falha ao ler " + file.path;
+        error = "P4G: could not read " + file.path;
         return false;
     }
 
@@ -905,13 +905,13 @@ bool read_cpk_file(
     } else if (file.extract_size == file.size) {
         output.swap(packed);
     } else {
-        error = "P4G: tamanhos inconsistentes: " + file.path;
+        error = "P4G: inconsistent sizes: " + file.path;
         return false;
     }
 
     if (output.size() != file.extract_size) {
         output.clear();
-        error = "P4G: tamanho descomprimido invalido: " + file.path;
+        error = "P4G: invalid decompressed size: " + file.path;
         return false;
     }
     return true;

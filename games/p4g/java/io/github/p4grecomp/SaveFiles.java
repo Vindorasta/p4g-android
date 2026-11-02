@@ -79,19 +79,19 @@ final class SaveFiles {
     }
 
     static void stageCopy(InputStream in, File out, long[] bytes) throws IOException {
-        if (in == null) throw new IOException("Não foi possível ler o save.");
+        if (in == null) throw new IOException("Could not read the save.");
         try (OutputStream stream = new FileOutputStream(out)) {
             byte[] buffer = new byte[65536];
             for (int n; (n = in.read(buffer)) != -1;) {
                 bytes[0] += n;
-                if (bytes[0] > MAX_BYTES) throw new IOException("O pacote de saves é grande demais.");
+                if (bytes[0] > MAX_BYTES) throw new IOException("The save package is too large.");
                 stream.write(buffer, 0, n);
             }
         }
     }
     static File stageDir() throws IOException {
         File dir = new File(Launcher.dataDir(), "user/.save-import-" + java.util.UUID.randomUUID());
-        if (!dir.mkdirs()) throw new IOException("Não foi possível preparar a importação.");
+        if (!dir.mkdirs()) throw new IOException("Could not prepare the import.");
         return dir;
     }
     static void removeStage(File dir) {
@@ -102,16 +102,16 @@ final class SaveFiles {
     static Result commit(Map<String, File> files) throws IOException {
         if (files.isEmpty()) return null;
         for (String name : files.keySet()) {
-            if (files.get(name).length() == 0) throw new IOException("Save vazio: " + name);
+            if (files.get(name).length() == 0) throw new IOException("Empty save: " + name);
             if (name.startsWith("data")) {
                 String stem = name.substring(0, name.lastIndexOf('.'));
                 if (!files.containsKey(stem + ".bin") || !files.containsKey(stem + ".binslot"))
-                    throw new IOException("Importe os dois arquivos do slot: " + stem + ".bin e " + stem + ".binslot.");
+                    throw new IOException("Import both files for this slot: " + stem + ".bin and " + stem + ".binslot.");
             }
         }
         Result result = new Result();
         result.backup = backup();
-        if (!saveDir().isDirectory() && !saveDir().mkdirs()) throw new IOException("Não foi possível criar user/save.");
+        if (!saveDir().isDirectory() && !saveDir().mkdirs()) throw new IOException("Could not create user/save.");
         List<String> written = new ArrayList<>();
         try {
             for (Map.Entry<String, File> entry : files.entrySet()) {
@@ -150,17 +150,17 @@ final class SaveFiles {
         long[] bytes = {0};
         try {
             InputStream input = cr.openInputStream(uri);
-            if (input == null) throw new IOException("Não foi possível abrir o ZIP.");
+            if (input == null) throw new IOException("Could not open the ZIP.");
             try (ZipInputStream z = new ZipInputStream(input)) {
                 int count = 0;
                 byte[] discard = new byte[65536];
                 for (ZipEntry e; (e = z.getNextEntry()) != null;) {
-                    if (++count > 4096) throw new IOException("O ZIP contém arquivos demais.");
+                    if (++count > 4096) throw new IOException("The ZIP contains too many files.");
                     if (e.isDirectory()) continue;
                     String path = e.getName().replace('\\', '/');
                     String name = path.substring(path.lastIndexOf('/') + 1);
                     if (SavePaths.safe(path) && SavePaths.file(name)) {
-                        if (staged.containsKey(path)) throw new IOException("Save duplicado no ZIP.");
+                        if (staged.containsKey(path)) throw new IOException("Duplicate save in ZIP.");
                         File dest = new File(stage, "entry-" + count);
                         stageCopy(z, dest, bytes);
                         names.add(path);
@@ -168,7 +168,7 @@ final class SaveFiles {
                     } else {
                         for (int n; (n = z.read(discard)) != -1;) {
                             bytes[0] += n;
-                            if (bytes[0] > MAX_BYTES) throw new IOException("O ZIP é grande demais.");
+                            if (bytes[0] > MAX_BYTES) throw new IOException("The ZIP is too large.");
                         }
                     }
                 }
@@ -178,7 +178,7 @@ final class SaveFiles {
             Map<String, File> files = new LinkedHashMap<>();
             for (String path : names) {
                 String rel = target(path, prefix);
-                if (rel != null && files.put(rel, staged.get(path)) != null) throw new IOException("Save duplicado.");
+                if (rel != null && files.put(rel, staged.get(path)) != null) throw new IOException("Duplicate save.");
             }
             return commit(files);
         } finally { removeStage(stage); }
@@ -186,7 +186,7 @@ final class SaveFiles {
 
     static void listTree(ContentResolver cr, Uri tree, String docId, String path, Map<String, Uri> out)
             throws IOException {
-        if (path.split("/").length > 16) throw new IOException("A pasta tem subpastas demais.");
+        if (path.split("/").length > 16) throw new IOException("The folder contains too many subfolders.");
         Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId);
         String[] cols = {Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE};
         try (Cursor c = cr.query(children, cols, null, null, null)) {
@@ -219,7 +219,7 @@ final class SaveFiles {
             for (Map.Entry<String, Uri> f : files.entrySet()) {
                 String rel = target(f.getKey(), pre);
                 if (rel == null) continue;
-                if (staged.containsKey(rel)) throw new IOException("Save duplicado na pasta.");
+                if (staged.containsKey(rel)) throw new IOException("Duplicate save in folder.");
                 File dest = new File(stage, "entry-" + staged.size());
                 try (InputStream in = cr.openInputStream(f.getValue())) { stageCopy(in, dest, bytes); }
                 staged.put(rel, dest);

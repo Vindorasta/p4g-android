@@ -23,7 +23,7 @@ bool make_dir(
     std::string& error
 ) {
     if (path.empty()) {
-        error = "P4G: pasta de saida vazia";
+        error = "P4G: empty output folder";
         return false;
     }
 
@@ -45,7 +45,7 @@ bool make_dir(
 #endif
 
         if (rc != 0 && errno != EEXIST) {
-            error = "P4G: impossivel criar pasta: " +
+            error = "P4G: could not create folder: " +
                     part + " (" + std::strerror(errno) + ")";
             return false;
         }
@@ -54,7 +54,7 @@ bool make_dir(
 
         if (stat(part.c_str(), &info) != 0 ||
             !S_ISDIR(info.st_mode)) {
-            error = "P4G: caminho nao e pasta: " + part;
+            error = "P4G: path is not a folder: " + part;
             return false;
         }
     }
@@ -73,7 +73,7 @@ bool save_file(
     FILE* f = std::fopen(tmp.c_str(), "wb");
 
     if (!f) {
-        error = "P4G: falha ao abrir: " + tmp;
+        error = "P4G: could not open: " + tmp;
         return false;
     }
 
@@ -86,7 +86,7 @@ bool save_file(
     if (!written || !closed ||
         std::rename(tmp.c_str(), path.c_str()) != 0) {
         std::remove(tmp.c_str());
-        error = "P4G: falha ao gravar: " + path;
+        error = "P4G: could not write: " + path;
         return false;
     }
 
@@ -195,7 +195,7 @@ long extract_shaders(
 
     if (!cpk || cpk->dir || cpk->size < 16) {
         error =
-            "P4G: data.cpk nao encontrado ou invalido";
+            "P4G: data.cpk missing or invalid";
         return -1;
     }
 
@@ -213,7 +213,7 @@ long extract_shaders(
 
     if (files.size() != 6) {
         error =
-            "P4G: numero inesperado de pacotes GXP";
+            "P4G: unexpected number of GXP packages";
         return -1;
     }
 
@@ -261,7 +261,7 @@ long extract_shaders(
 
         if (!expected_pack_name(name)) {
             error =
-                "P4G: nome inesperado de pacote: " +
+                "P4G: unexpected package name: " +
                 file.path;
 
             return -1;
@@ -290,7 +290,7 @@ long extract_shaders(
                 parse_error
             ) || records.empty()) {
             error =
-                "P4G: GXP invalido em " +
+                "P4G: invalid GXP in " +
                 name + ": " + parse_error;
 
             return -1;
@@ -372,8 +372,8 @@ long extract_shaders(
                 total
             )) {
             error =
-                "P4G: quantidade de programas "
-                "excedeu limite";
+                "P4G: program count "
+                "exceeded limit";
 
             return -1;
         }

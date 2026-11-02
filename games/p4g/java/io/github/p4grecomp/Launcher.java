@@ -110,7 +110,7 @@ public class Launcher extends Activity {
         try {
             return PreparationFiles.ready(new File(getCacheDir(), "import/spirv"),
                     new File(dataDir(), "spirv"), getAssets().open("spirv/manifest.tsv"));
-        } catch (Exception e) { Log.w("P4G-Launch", "Preparação precisa ser refeita", e); return false; }
+        } catch (Exception e) { Log.w("P4G-Launch", "Preparation must be repeated", e); return false; }
     }
 
     String displayName(Uri uri) {
@@ -200,7 +200,7 @@ public class Launcher extends Activity {
                 new String[] {"Desactivada", "Activada"},
                 new String[] {"Off", "On"}, 0));
         options.add(new Option("NX_FPS_CAP", "Límite de FPS", "FPS limit", new String[] {"30", "60"},
-                new String[] {"30 fps", "Predeterminado del juego"}, new String[] {"30 fps", "Game default"}, 0));
+                new String[] {"30 FPS", "60 FPS"}, new String[] {"30 FPS", "60 FPS"}, 0));
         options.add(new Option("NX_SHOW_FPS", "Contador de FPS", "FPS counter", new String[] {"0", "1"},
                 new String[] {"Desactivado", "Activado"}, new String[] {"Off", "On"}, 0));
         options.add(new Option("NX_TOUCH_SHOW", "Controles táctiles", "On-screen controls", new String[] {"1", "0"},
@@ -238,7 +238,7 @@ public class Launcher extends Activity {
         String error = intent.getStringExtra("game_error");
         if (error != null) {
             intent.removeExtra("game_error");
-            tell("Não foi possível abrir o jogo", error);
+            tell("Could not open the game", error);
         }
     }
 
@@ -261,7 +261,7 @@ public class Launcher extends Activity {
         title.setTypeface(Typeface.DEFAULT_BOLD);
         root.addView(title);
         TextView version = new TextView(this);
-        version.setText("PRE-ALPHA  ·  0.0.1");
+        version.setText("BETA  ·  0.2.0");
         version.setTextColor(P4gTheme.YELLOW);
         version.setTextSize(13);
         version.setTypeface(Typeface.DEFAULT_BOLD);
@@ -294,7 +294,7 @@ public class Launcher extends Activity {
         play = new Button(this);
         P4gTheme.button(play, true);
         play.setAllCaps(false);
-        play.setText("Preparar");
+        play.setText("Prepare");
         play.setTextSize(20);
         root.addView(play, new LinearLayout.LayoutParams(-1, dp(64)));
         play.setOnClickListener(v -> {
@@ -366,7 +366,7 @@ public class Launcher extends Activity {
         });
         root.addView(edit);
 
-        P4gTheme.section(root, "Jogos salvos e tradução");
+        P4gTheme.section(root, "Saves and translation");
         // Saves: in from a ZIP or a folder (a Switch backup or another player's), out to a ZIP in Download.
         LinearLayout saves = new LinearLayout(this);
         saves.setOrientation(LinearLayout.HORIZONTAL);
@@ -501,7 +501,7 @@ public class Launcher extends Activity {
         if (installingShaders || importingSaves || isFinishing() || isDestroyed()) return;
         final int generation = ++refreshGeneration;
         play.setEnabled(false);
-        status.setText("Verificando preparação...");
+        status.setText("Checking preparation...");
         new Thread(() -> {
             final boolean access = hasAccess();
             final boolean readable = access && gameUri() != null && gameReadable();
@@ -523,12 +523,12 @@ public class Launcher extends Activity {
                     status.setText(gameName());
                     play.setText(t("Jugar", "Play"));
                 } else {
-                    String game = gameUri() == null ? "Nenhum jogo selecionado" : gameName();
-                    status.setText(game + "\nprod.keys: " + (keys ? "selecionado" : "não selecionado") +
-                        (!access ? "\nPermita o acesso aos arquivos para preparar o jogo." :
-                         !readable && gameUri() != null ? "\nSelecione novamente o arquivo do jogo." :
-                         readable && keys ? "\nPrepare o jogo para continuar." : ""));
-                    play.setText(!access ? "Permitir acesso" : "Preparar");
+                    String game = gameUri() == null ? "No game selected" : gameName();
+                    status.setText(game + "\nprod.keys: " + (keys ? "selected" : "not selected") +
+                        (!access ? "\nAllow file access to prepare the game." :
+                         !readable && gameUri() != null ? "\nSelect the game file again." :
+                         readable && keys ? "\nPrepare the game to continue." : ""));
+                    play.setText(!access ? "Allow access" : "Prepare");
                 }
             });
         }, "P4G-setup-check").start();
@@ -582,7 +582,7 @@ public class Launcher extends Activity {
         if (request == PREPARE) {
             if (result == RESULT_OK && gameUri() != null) {
                 prefs().edit().putString("p4g_prepared_uri", gameUri()).apply();
-                Log.i("P4G-Launch", "Preparacao concluida para URI selecionado");
+                Log.i("P4G-Launch", "Preparation complete for selected URI");
             }
             refresh();
             return;
@@ -611,7 +611,7 @@ public class Launcher extends Activity {
         if (importingSaves) return;
         importingSaves = true;
         play.setEnabled(false);
-        status.setText("Importando jogos salvos...");
+        status.setText("Importing saves...");
         new Thread(() -> {
             SaveFiles.Result imported = null;
             String failure = null;
@@ -625,11 +625,11 @@ public class Launcher extends Activity {
                 importingSaves = false;
                 if (isFinishing() || isDestroyed()) return;
                 refresh();
-                if (error != null) tell("Não foi possível importar", error);
-                else if (result == null) tell("Nenhum save encontrado",
-                    "Escolha a pasta ou ZIP com os arquivos data0001.bin e data0001.binslot do P4G. Importe também system.bin e system.binslot se estiverem no backup.");
-                else tell("Jogos salvos importados", result.files + " arquivos importados. Abra Carregar jogo no P4G." +
-                    (result.backup == null ? "" : "\n\nBackup anterior: user/" + result.backup));
+                if (error != null) tell("Import failed", error);
+                else if (result == null) tell("No saves found",
+                    "Choose the folder or ZIP containing the P4G data0001.bin and data0001.binslot files. Include system.bin and system.binslot if they are in your backup.");
+                else tell("Saves imported", result.files + " files imported. Select Load Game in P4G." +
+                    (result.backup == null ? "" : "\n\nPrevious saves backed up to: user/" + result.backup));
             });
         }, "P4G-save-import").start();
     }

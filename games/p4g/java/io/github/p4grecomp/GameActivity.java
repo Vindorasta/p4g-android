@@ -22,13 +22,13 @@ public class GameActivity extends NativeActivity {
         // the launcher's process. Open the game here, before native loading.
         try {
             Uri uri = getIntent().getData();
-            if (uri == null) throw new java.io.IOException("Selecione novamente o jogo.");
+            if (uri == null) throw new java.io.IOException("Select the game again.");
             ParcelFileDescriptor descriptor = getContentResolver().openFileDescriptor(uri, "r");
-            if (descriptor == null) throw new java.io.IOException("Não foi possível abrir o jogo.");
+            if (descriptor == null) throw new java.io.IOException("Could not open the game.");
             File keys = Launcher.keysFile(this, "prod.keys");
             if (!keys.isFile() || keys.length() == 0) {
                 descriptor.close();
-                throw new java.io.IOException("Selecione novamente prod.keys.");
+                throw new java.io.IOException("Select prod.keys again.");
             }
             Os.setenv("NX_GAME_FD", String.valueOf(descriptor.detachFd()), true);
             String name = getIntent().getStringExtra(ImportActivity.EXTRA_NAME);
@@ -55,10 +55,10 @@ public class GameActivity extends NativeActivity {
         runOnUiThread(() -> {
             if (isFinishing() || isDestroyed() || (exitDialog != null && exitDialog.isShowing())) return;
             exitDialog = new AlertDialog.Builder(this)
-                .setTitle("Encerrar o jogo?")
-                .setMessage("Deseja encerrar o jogo e voltar ao menu principal? O progresso não salvo será perdido.")
-                .setNegativeButton("Continuar jogando", null)
-                .setPositiveButton("Encerrar", (dialog, which) -> {
+                .setTitle("Exit the game?")
+                .setMessage("Do you want to exit the game and return to the main menu? Unsaved progress will be lost.")
+                .setNegativeButton("Keep playing", null)
+                .setPositiveButton("Exit", (dialog, which) -> {
                     startActivity(menuIntent());
                     // NativeActivity destruction stops the runtime. Since it is
                     // in :game, the launcher's process and menu stay alive.

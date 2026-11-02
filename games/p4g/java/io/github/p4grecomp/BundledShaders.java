@@ -30,13 +30,13 @@ final class BundledShaders {
 
     private static String fileDigest(File file) throws IOException {
         try (InputStream in = new FileInputStream(file)) { return digest(in); }
-        catch (Exception e) { throw new IOException("Nao foi possivel verificar " + file.getName(), e); }
+        catch (Exception e) { throw new IOException("Could not verify " + file.getName(), e); }
     }
 
     private static void backup(File file, String hash) throws IOException {
         File saved = new File(file.getParentFile(), file.getName() + ".before-pack-" + hash.substring(0, 12));
         if (saved.exists()) {
-            if (!hash.equals(fileDigest(saved))) throw new IOException("Backup de shader divergente: " + saved.getName());
+            if (!hash.equals(fileDigest(saved))) throw new IOException("Shader backup mismatch: " + saved.getName());
             return;
         }
         AtomicFile atomic = new AtomicFile(saved);
@@ -85,12 +85,12 @@ final class BundledShaders {
         AssetManager assets = context.getAssets();
         final String packId;
         try (InputStream in = assets.open("spirv/manifest.tsv")) { packId = digest(in); }
-        catch (Exception e) { throw new IOException("Nao foi possivel verificar o pacote de shaders.", e); }
+        catch (Exception e) { throw new IOException("Could not verify the shader package.", e); }
         android.content.SharedPreferences preferences = context.getSharedPreferences("shader-pack", Context.MODE_PRIVATE);
         final boolean updatingPack = !packId.equals(preferences.getString("installed-manifest", ""));
         File directory = new File(Launcher.dataDir(), "spirv");
         if (!directory.isDirectory() && !directory.mkdirs())
-            throw new IOException("Nao foi possivel criar a pasta spirv.");
+            throw new IOException("Could not create the spirv folder.");
         int installed = 0, kept = 0, total = 0;
         boolean resultsListed = false;
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
@@ -100,15 +100,15 @@ final class BundledShaders {
                 String[] entry = line.split("\t", -1);
                 if (entry.length != 3 || !entry[0].matches("(?:[0-9a-f]{16}\\.spv|results\\.tsv)") ||
                         !entry[1].matches("[0-9a-f]{64}"))
-                    throw new IOException("Indice de shaders do APK invalido.");
+                    throw new IOException("Invalid APK shader index.");
                 long expectedSize;
                 try { expectedSize = Long.parseLong(entry[2]); }
-                catch (NumberFormatException e) { throw new IOException("Tamanho de shader invalido.", e); }
+                catch (NumberFormatException e) { throw new IOException("Invalid shader size.", e); }
                 final boolean metadata = "results.tsv".equals(entry[0]);
                 resultsListed |= metadata;
                 if (expectedSize <= 0 || expectedSize > 16 * 1024 * 1024 ||
                         (!metadata && (expectedSize < 20 || expectedSize % 4 != 0)))
-                    throw new IOException("Tamanho de shader fora do limite.");
+                    throw new IOException("Shader size is out of range.");
                 ++total;
                 File target = new File(directory, entry[0]);
                 AtomicFile atomic = new AtomicFile(target);
@@ -134,29 +134,29 @@ final class BundledShaders {
                     long written = 0;
                     for (int n; (n = in.read(buffer)) != -1;) {
                         written += n;
-                        if (written > expectedSize) throw new IOException("Shader maior que o indice.");
+                        if (written > expectedSize) throw new IOException("Shader is larger than its index entry.");
                         digest.update(buffer, 0, n);
                         out.write(buffer, 0, n);
                     }
                     StringBuilder hash = new StringBuilder();
                     for (byte b : digest.digest()) hash.append(String.format(java.util.Locale.ROOT, "%02x", b & 255));
                     if (written != expectedSize || !entry[1].equals(hash.toString()))
-                        throw new IOException("Shader do APK incompleto: " + entry[0]);
+                        throw new IOException("Incomplete APK shader: " + entry[0]);
                     atomic.finishWrite(out);
                     out = null;
                     if (!(metadata ? validResults(target) : validHeader(target)))
-                        throw new IOException("Arquivo de shader invalido: " + entry[0]);
+                        throw new IOException("Invalid shader file: " + entry[0]);
                     ++installed;
                 } catch (Exception e) {
                     if (out != null) atomic.failWrite(out);
                     if (e instanceof IOException) throw (IOException)e;
-                    throw new IOException("Falha ao instalar shader: " + entry[0], e);
+                    throw new IOException("Could not install shader: " + entry[0], e);
                 }
             }
         }
-        if (total == 0 || !resultsListed) throw new IOException("O pacote de shaders esta sem results.tsv.");
+        if (total == 0 || !resultsListed) throw new IOException("The shader package is missing results.tsv.");
         if (!preferences.edit().putString("installed-manifest", packId).commit())
-            throw new IOException("Nao foi possivel registrar a instalacao dos shaders.");
+            throw new IOException("Could not record shader installation.");
         Log.i("P4G-Shaders", "Pack: " + total + "; instalados: " + installed + "; preservados: " + kept);
     }
 }

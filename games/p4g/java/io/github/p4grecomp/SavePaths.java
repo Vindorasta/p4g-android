@@ -23,7 +23,7 @@ final class SavePaths {
             if (!file(path.substring(slash + 1))) continue;
             String parent = path.substring(0, slash + 1);
             if (found != null && !found.equals(parent))
-                throw new IOException("Há mais de uma pasta de saves no pacote. Selecione apenas a pasta desejada.");
+                throw new IOException("The package contains more than one save folder. Select only the backup you want to import.");
             found = parent;
         }
         return found;

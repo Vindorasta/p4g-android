@@ -82,13 +82,13 @@ inline bool parseGxp(
         ++pos;
 
     if (pos == data.size()) {
-        error = "Nenhum registro GXP encontrado";
+        error = "No GXP record found";
         return false;
     }
 
     while (pos < data.size()) {
         if (!gxpIsName(data, pos)) {
-            error = "Nome GXP invalido no offset " +
+            error = "Invalid GXP name at offset " +
                     std::to_string(pos);
             return false;
         }
@@ -99,7 +99,7 @@ inline bool parseGxp(
         const size_t start = pos + 36;
 
         if (data.size() - start < 12) {
-            error = "Cabecalho GXP truncado";
+            error = "Truncated GXP header";
             return false;
         }
 
@@ -107,7 +107,7 @@ inline bool parseGxp(
             data[start + 1] != 'X' ||
             data[start + 2] != 'P' ||
             data[start + 3] != 0) {
-            error = "Assinatura GXP invalida";
+            error = "Invalid GXP signature";
             return false;
         }
 
@@ -116,7 +116,7 @@ inline bool parseGxp(
 
         if (size < 12 ||
             size > UINT32_MAX - 31u) {
-            error = "Tamanho GXP invalido";
+            error = "Invalid GXP size";
             return false;
         }
 
@@ -125,7 +125,7 @@ inline bool parseGxp(
 
         if (allocated != aligned ||
             allocated > data.size() - start) {
-            error = "Limites GXP invalidos";
+            error = "Invalid GXP bounds";
             return false;
         }
 
