@@ -321,6 +321,28 @@ jobs:
                   "build-apk/shader-libs/libc++_shared.so",
           }
 
+          # Include the ready-to-use runtime pack, not the numbered GXP cache.
+          shader_root = Path("games/p4g/assets/spirv")
+          manifest = shader_root / "manifest.tsv"
+          if not manifest.is_file():
+              raise FileNotFoundError(manifest)
+          import hashlib
+          import re
+          records = [line.split("\t") for line in manifest.read_text().splitlines() if line.strip()]
+          if not records:
+              raise RuntimeError("Bundled shader pack is empty")
+          for name, digest, length in records:
+              if not re.fullmatch(r"[0-9a-f]{16}\.spv", name):
+                  raise RuntimeError("Invalid bundled shader name")
+              source = shader_root / name
+              data = source.read_bytes()
+              if len(data) != int(length) or hashlib.sha256(data).hexdigest() != digest:
+                  raise RuntimeError(f"Bundled shader hash mismatch: {name}")
+              if len(data) < 20 or len(data) % 4 or data[:4] != bytes.fromhex("03022307"):
+                  raise RuntimeError(f"Invalid SPIR-V header: {name}")
+              files[f"assets/spirv/{name}"] = str(source)
+          files["assets/spirv/manifest.tsv"] = str(manifest)
+
           if not apk.is_file():
               raise FileNotFoundError(apk)
 
@@ -371,6 +393,8 @@ jobs:
           python3 - <<'PY'
           import zipfile
 
+          from pathlib import Path
+
           apk = "build-apk/base.apk"
 
           required = [
@@ -380,6 +404,11 @@ jobs:
               "lib/arm64-v8a/libp4gshader.so",
               "lib/arm64-v8a/libc++_shared.so",
           ]
+
+          manifest = Path("games/p4g/assets/spirv/manifest.tsv")
+          required += ["assets/spirv/manifest.tsv"]
+          required += ["assets/spirv/" + line.split("\t")[0]
+                       for line in manifest.read_text().splitlines() if line.strip()]
 
           with zipfile.ZipFile(apk) as z:
               names = z.namelist()
