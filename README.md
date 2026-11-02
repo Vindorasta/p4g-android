@@ -38,7 +38,7 @@ This is an unofficial fan-made technical project and is not affiliated with, spo
 
 ### Experimental Android builds
 
-1. Download the latest available APK from [GitHub Actions](../../actions/workflows/build-p4g.yml).
+1. Alpha Soon.
 2. Install the APK on an ARM64 Android device.
 3. Open the application and grant the required file permissions.
 4. Select your own Persona 4 Golden Nintendo Switch game dump.
