@@ -29,24 +29,46 @@ final class BundledShaders {
         }
     }
 
+    private static boolean validResults(File file) {
+        if (!file.isFile() || file.length() == 0) return false;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file), "UTF-8"))) {
+            String header = reader.readLine();
+            if (header == null) return false;
+            String[] columns = header.split("\t", -1);
+            int resources = -1;
+            for (int i = 0; i < columns.length; ++i)
+                if ("resources".equals(columns[i])) resources = i;
+            if (columns.length == 0 || !"hash".equals(columns[0]) || resources < 0) return false;
+            for (String line; (line = reader.readLine()) != null;) {
+                String[] row = line.split("\t", -1);
+                if (row.length > resources && row[0].matches("[0-9a-f]{16}") && !row[resources].isEmpty()) return true;
+            }
+        } catch (IOException ignored) { }
+        return false;
+    }
+
     static synchronized void install(Context context) throws IOException {
         AssetManager assets = context.getAssets();
         File directory = new File(Launcher.dataDir(), "spirv");
         if (!directory.isDirectory() && !directory.mkdirs())
             throw new IOException("Nao foi possivel criar a pasta spirv.");
         int installed = 0, kept = 0, total = 0;
+        boolean resultsListed = false;
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
                 assets.open("spirv/manifest.tsv"), "UTF-8"))) {
             for (String line; (line = reader.readLine()) != null;) {
                 if (line.trim().isEmpty()) continue;
                 String[] entry = line.split("\t", -1);
-                if (entry.length != 3 || !entry[0].matches("[0-9a-f]{16}\\.spv") ||
+                if (entry.length != 3 || !entry[0].matches("(?:[0-9a-f]{16}\\.spv|results\\.tsv)") ||
                         !entry[1].matches("[0-9a-f]{64}"))
                     throw new IOException("Indice de shaders do APK invalido.");
                 long expectedSize;
                 try { expectedSize = Long.parseLong(entry[2]); }
                 catch (NumberFormatException e) { throw new IOException("Tamanho de shader invalido.", e); }
-                if (expectedSize < 20 || expectedSize > 16 * 1024 * 1024 || expectedSize % 4 != 0)
+                final boolean metadata = "results.tsv".equals(entry[0]);
+                resultsListed |= metadata;
+                if (expectedSize <= 0 || expectedSize > 16 * 1024 * 1024 ||
+                        (!metadata && (expectedSize < 20 || expectedSize % 4 != 0)))
                     throw new IOException("Tamanho de shader fora do limite.");
                 ++total;
                 File target = new File(directory, entry[0]);
@@ -57,7 +79,7 @@ final class BundledShaders {
                     catch (IOException ignored) { /* retry installation below */ }
                 }
                 // Keep user-installed fixes and shaders not in this bundled pack.
-                if (validHeader(target)) { ++kept; continue; }
+                if (metadata ? validResults(target) : validHeader(target)) { ++kept; continue; }
                 FileOutputStream out = null;
                 try (InputStream in = assets.open("spirv/" + entry[0])) {
                     MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -76,7 +98,8 @@ final class BundledShaders {
                         throw new IOException("Shader do APK incompleto: " + entry[0]);
                     atomic.finishWrite(out);
                     out = null;
-                    if (!validHeader(target)) throw new IOException("Cabecalho SPIR-V invalido: " + entry[0]);
+                    if (!(metadata ? validResults(target) : validHeader(target)))
+                        throw new IOException("Arquivo de shader invalido: " + entry[0]);
                     ++installed;
                 } catch (Exception e) {
                     if (out != null) atomic.failWrite(out);
@@ -85,7 +108,7 @@ final class BundledShaders {
                 }
             }
         }
-        if (total == 0) throw new IOException("O APK nao contem shaders para instalar.");
+        if (total == 0 || !resultsListed) throw new IOException("O pacote de shaders esta sem results.tsv.");
         Log.i("P4G-Shaders", "Pack: " + total + "; instalados: " + installed + "; preservados: " + kept);
     }
 }
