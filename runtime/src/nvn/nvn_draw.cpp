@@ -12,6 +12,9 @@
 #include <cstring>
 #include <set>
 #include <map>
+#include <memory>
+
+#include "nvn_p4g_overlay_aligned.inc"
 
 #include "nvn_draw_state.h"
 #include "nvn_ultrawide.h"
@@ -548,16 +551,6 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         g_stats.no_vertex++;
         return false;
     }
-    // Two automatic captures of the filter chain after the first main 3D draw.
-    // No shader, viewport, UV or face-orientation changes.
-    static uint64_t scene_frame = ~0ull, capture_frame = ~0ull, final_frame = ~0ull;
-    static unsigned filter_captures = 0;
-    static uint64_t final_tag = 0;
-    uint64_t filter_capture_tag = 0;
-    if (vs->hash == "937df4e3272e6853" && scene_frame == ~0ull) {
-        scene_frame = g_frame.load();
-        log("p4g: filter capture v1 armed at frame=%llu", (unsigned long long)scene_frame);
-    }
     std::vector<const ShaderInfo*> swapped;  // NX_SWAP_FS / NX_SKIP_FS (nvn_draw_trace.cpp)
     if (!debug_shader_overrides(shaders, fs, swapped)) return false;
     const ProgramLayout& layout = program_layout(*shaders);
@@ -580,26 +573,6 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     }
     // Textures first: an upload or a layout change cannot happen inside the render pass.
     uint32_t gathered = gather_textures(*shaders);
-    if (plat::kDiagnostics && scene_frame != ~0ull && filter_captures < 2 &&
-        g_frame.load() >= scene_frame + 120 &&
-        (capture_frame == ~0ull || g_frame.load() >= capture_frame + 600) &&
-        vs->hash == "8e2b4a6cdf80ae80" && fs && fs->hash == "380b6b961d29cac8" &&
-        !g_textures.resolved.empty() && t.color_count && t.colors[0]) {
-        const auto& source = g_textures.resolved[0];
-        GpuImage* img = source.texture ? image_of(source.texture) : nullptr;
-        if (img && img->rendered && img->layout != VK_IMAGE_LAYOUT_UNDEFINED) {
-            filter_capture_tag = 0xE8000000ull + uint64_t(filter_captures++) * 16;
-            capture_frame = g_frame.load();
-            final_frame = capture_frame;
-            final_tag = filter_capture_tag + 2;
-            draw_end_rendering(cb, 6);
-            g_snap_layer = g_snap_level = 0;
-            debug_snapshot(cb, *img, filter_capture_tag);
-            log("p4g: filter capture %llx input=%llx %ux%u frame=%llu",
-                (unsigned long long)filter_capture_tag, (unsigned long long)source.texture,
-                img->width, img->height, (unsigned long long)capture_frame);
-        }
-    }
     {   // NX_DUMP_DRAW_TEXTURES=<fs hash>@<draw>: the images the first such draw samples, snapshotted (frames/00000_c00000NN)
         static const char* env = std::getenv("NX_DUMP_DRAW_TEXTURES");
         static int done_count = 0;
@@ -693,6 +666,74 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     PipelineKey key;
     std::memset(&key, 0, sizeof key);  // the key is compared byte for byte
     key.vs = vs, key.fs = fs;
+    // P4G experiment: a separate fragment variant for a translucent copy of
+    // a rendered scene. Geometry, viewport and the original shaders stay intact.
+    static bool overlay_announced = false;
+    if (!overlay_announced) {
+        overlay_announced = true;
+        log("p4g: overlay alignment v1 (translucent scene-texture reads only)");
+    }
+    if (vs->hash == "547d293498cbedcf" && fs && fs->hash == "7247e449c951a72f" &&
+        g_textures.resolved.size() == 1 && g_state.color.blend_enable[0]) {
+        const uint64_t texture = g_textures.resolved[0].texture;
+        const GpuImage* source = texture ? image_of(texture) : nullptr;
+        if (source && source->rendered && texture != t.colors[0] &&
+            source->width >= 640 && source->height >= 360 &&
+            std::abs(int64_t(source->width) * 9 - int64_t(source->height) * 16) <= 16) {
+            float alpha = -1;
+            if (g_state.attribs.size() > 1) {
+                const VertexAttrib& color = g_state.attribs[1];
+                if (color.stream < g_state.streams.size() && color.stream < 16 &&
+                    !g_state.streams[color.stream].divisor) {
+                    const Range& vb = g_state.vertex_buffers[color.stream];
+                    int64_t vertex = indexed ? int64_t(c.i[1]) : int64_t(c.i[0]);
+                    bool index_ok = true;
+                    if (indexed) {
+                        const uint8_t* indices = guest_bytes(c.a[0]);
+                        uint32_t first = 0;
+                        const uint32_t bytes = c.mask == 0 ? 1 : c.mask == 1 ? 2 : 4;
+                        if (indices && c.i[0] > 0) std::memcpy(&first, indices, bytes);
+                        else index_ok = false;
+                        vertex += first;
+                    }
+                    if (index_ok && vertex >= 0 && vb.address) {
+                        const uint64_t offset = uint64_t(vertex) * g_state.streams[color.stream].stride + color.offset;
+                        const uint8_t* data = guest_bytes(vb.address);
+                        const VkFormat format = vk_vertex_format(color.format);
+                        if (data && format == VK_FORMAT_R8G8B8A8_UNORM && offset + 4 <= vb.size)
+                            alpha = float(data[offset + 3]) / 255.0f;
+                        else if (data && format == VK_FORMAT_R32G32B32A32_SFLOAT && offset + 16 <= vb.size)
+                            std::memcpy(&alpha, data + offset + 12, sizeof alpha);
+                    }
+                }
+            }
+            const BlendTarget& blend = g_state.blend[0];
+            const bool align = alpha > 0.001f && alpha < 0.999f && blend.src_rgb == 5 && blend.dst_rgb == 6;
+            static std::set<std::string> overlay_reports;
+            if (overlay_reports.size() < 96) {
+                char description[200];
+                std::snprintf(description, sizeof description, "source=%llx %ux%u alpha=%g blend=%u/%u aligned=%u",
+                    (unsigned long long)texture, source->width, source->height, alpha,
+                    blend.src_rgb, blend.dst_rgb, unsigned(align));
+                if (overlay_reports.insert(description).second)
+                    log("p4g: overlay candidate frame=%llu %s", (unsigned long long)g_frame.load(), description);
+            }
+            if (align) {
+                static const std::unique_ptr<ShaderInfo> aligned = [fs] {
+                    auto variant = std::make_unique<ShaderInfo>(*fs);
+                    variant->hash = kP4gOverlayAlignedHash;
+                    variant->spirv.assign(kP4gOverlayAlignedSpirv,
+                        kP4gOverlayAlignedSpirv + sizeof(kP4gOverlayAlignedSpirv) / sizeof(uint32_t));
+                    return variant;
+                }();
+                key.fs = aligned.get();
+                static uint64_t aligned_draws = 0;
+                if (++aligned_draws <= 8 || aligned_draws % 1000 == 0)
+                    log("p4g: overlay aligned draws=%llu frame=%llu alpha=%g",
+                        (unsigned long long)aligned_draws, (unsigned long long)g_frame.load(), alpha);
+            }
+        }
+    }
     key.topology = mode;
     key.attrib_count = uint32_t(std::min<size_t>(g_state.attribs.size(), 16));
     std::copy_n(g_state.attribs.begin(), key.attrib_count, key.attribs);
@@ -942,27 +983,6 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         debug_dump_add(t.colors[0]);
         for (const ResolvedTexture& r : g_textures.resolved) debug_dump_add(r.texture);
         g_dump_request = ++g_dump_draws;
-    }
-    if (filter_capture_tag && t.color_count && t.colors[0]) {
-        if (GpuImage* img = image_of(t.colors[0])) {
-            draw_end_rendering(cb, 6);
-            g_snap_layer = g_snap_level = 0;
-            debug_snapshot(cb, *img, filter_capture_tag + 1);
-            log("p4g: filter capture %llx filtered=%llx %ux%u",
-                (unsigned long long)(filter_capture_tag + 1), (unsigned long long)t.colors[0], img->width, img->height);
-        }
-    }
-    if (plat::kDiagnostics && final_frame == g_frame.load() && final_tag &&
-        vs->hash == "2fe82df0569b75ff" && fs && fs->hash == "4a736ef76defb297" &&
-        t.color_count && t.colors[0]) {
-        if (GpuImage* img = image_of(t.colors[0])) {
-            draw_end_rendering(cb, 6);
-            g_snap_layer = g_snap_level = 0;
-            debug_snapshot(cb, *img, final_tag);
-            log("p4g: filter capture %llx composed=%llx %ux%u",
-                (unsigned long long)final_tag, (unsigned long long)t.colors[0], img->width, img->height);
-            final_tag = 0;
-        }
     }
     trace_draw(t, mode, indexed, c, vs, fs, g_textures.bindings, g_textures.handles);
     return true;
