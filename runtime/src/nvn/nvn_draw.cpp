@@ -548,6 +548,16 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         g_stats.no_vertex++;
         return false;
     }
+    // Two automatic captures of the filter chain after the first main 3D draw.
+    // No shader, viewport, UV or face-orientation changes.
+    static uint64_t scene_frame = ~0ull, capture_frame = ~0ull, final_frame = ~0ull;
+    static unsigned filter_captures = 0;
+    static uint64_t final_tag = 0;
+    uint64_t filter_capture_tag = 0;
+    if (vs->hash == "937df4e3272e6853" && scene_frame == ~0ull) {
+        scene_frame = g_frame.load();
+        log("p4g: filter capture v1 armed at frame=%llu", (unsigned long long)scene_frame);
+    }
     std::vector<const ShaderInfo*> swapped;  // NX_SWAP_FS / NX_SKIP_FS (nvn_draw_trace.cpp)
     if (!debug_shader_overrides(shaders, fs, swapped)) return false;
     const ProgramLayout& layout = program_layout(*shaders);
@@ -570,6 +580,26 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     }
     // Textures first: an upload or a layout change cannot happen inside the render pass.
     uint32_t gathered = gather_textures(*shaders);
+    if (plat::kDiagnostics && scene_frame != ~0ull && filter_captures < 2 &&
+        g_frame.load() >= scene_frame + 120 &&
+        (capture_frame == ~0ull || g_frame.load() >= capture_frame + 600) &&
+        vs->hash == "8e2b4a6cdf80ae80" && fs && fs->hash == "380b6b961d29cac8" &&
+        !g_textures.resolved.empty() && t.color_count && t.colors[0]) {
+        const auto& source = g_textures.resolved[0];
+        GpuImage* img = source.texture ? image_of(source.texture) : nullptr;
+        if (img && img->rendered && img->layout != VK_IMAGE_LAYOUT_UNDEFINED) {
+            filter_capture_tag = 0xE8000000ull + uint64_t(filter_captures++) * 16;
+            capture_frame = g_frame.load();
+            final_frame = capture_frame;
+            final_tag = filter_capture_tag + 2;
+            draw_end_rendering(cb, 6);
+            g_snap_layer = g_snap_level = 0;
+            debug_snapshot(cb, *img, filter_capture_tag);
+            log("p4g: filter capture %llx input=%llx %ux%u frame=%llu",
+                (unsigned long long)filter_capture_tag, (unsigned long long)source.texture,
+                img->width, img->height, (unsigned long long)capture_frame);
+        }
+    }
     {   // NX_DUMP_DRAW_TEXTURES=<fs hash>@<draw>: the images the first such draw samples, snapshotted (frames/00000_c00000NN)
         static const char* env = std::getenv("NX_DUMP_DRAW_TEXTURES");
         static int done_count = 0;
@@ -912,6 +942,27 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         debug_dump_add(t.colors[0]);
         for (const ResolvedTexture& r : g_textures.resolved) debug_dump_add(r.texture);
         g_dump_request = ++g_dump_draws;
+    }
+    if (filter_capture_tag && t.color_count && t.colors[0]) {
+        if (GpuImage* img = image_of(t.colors[0])) {
+            draw_end_rendering(cb, 6);
+            g_snap_layer = g_snap_level = 0;
+            debug_snapshot(cb, *img, filter_capture_tag + 1);
+            log("p4g: filter capture %llx filtered=%llx %ux%u",
+                (unsigned long long)(filter_capture_tag + 1), (unsigned long long)t.colors[0], img->width, img->height);
+        }
+    }
+    if (plat::kDiagnostics && final_frame == g_frame.load() && final_tag &&
+        vs->hash == "2fe82df0569b75ff" && fs && fs->hash == "4a736ef76defb297" &&
+        t.color_count && t.colors[0]) {
+        if (GpuImage* img = image_of(t.colors[0])) {
+            draw_end_rendering(cb, 6);
+            g_snap_layer = g_snap_level = 0;
+            debug_snapshot(cb, *img, final_tag);
+            log("p4g: filter capture %llx composed=%llx %ux%u",
+                (unsigned long long)final_tag, (unsigned long long)t.colors[0], img->width, img->height);
+            final_tag = 0;
+        }
     }
     trace_draw(t, mode, indexed, c, vs, fs, g_textures.bindings, g_textures.handles);
     return true;
