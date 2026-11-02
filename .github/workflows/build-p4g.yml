@@ -1,5 +1,5 @@
 
-name: P4G Pre-alpha
+name: P4G Beta
 
 on:
   workflow_dispatch:
@@ -502,19 +502,19 @@ jobs:
             --ks-type PKCS12 \
             --ks-pass env:P4G_SIGNING_PASSWORD \
             --key-pass env:P4G_SIGNING_PASSWORD \
-            --out build-apk/p4g-0.0.1-pre-alpha.apk \
+            --out "build-apk/P4G.apk" \
             build-apk/aligned.apk
 
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs \
-            build-apk/p4g-0.0.1-pre-alpha.apk
-          test -s build-apk/p4g-0.0.1-pre-alpha.apk
+            "build-apk/P4G.apk"
+          test -s "build-apk/P4G.apk"
 
 
       - name: Upload P4G APK
         uses: actions/upload-artifact@v4
         with:
-          name: P4G-0.0.1-Pre-Alpha
-          path: build-apk/p4g-0.0.1-pre-alpha.apk
+          name: P4G-0.2.0-Beta
+          path: build-apk/P4G.apk
           if-no-files-found: error
 
       - name: Upload shader packaging diagnostics
