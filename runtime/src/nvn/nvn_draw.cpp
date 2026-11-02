@@ -748,7 +748,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     static bool removal_announced = false;
     if (!removal_announced) {
         removal_announced = true;
-        log("p4g: scene-copy removal v1 active (partial-alpha 547d/7247 scene reads)");
+        log("p4g: scene-copy removal v2 active (v1 + gradient vertex alpha)");
     }
     if (vs->hash == "547d293498cbedcf" && fs && fs->hash == "7247e449c951a72f" &&
         g_textures.resolved.size() == 1 && g_state.color.blend_enable[0] &&
@@ -786,8 +786,71 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                 }
             }
             const BlendTarget& blend = g_state.blend[0];
-            const bool remove_copy = alpha > 0.001f && alpha < 0.999f &&
+            const bool remove_original = alpha > 0.001f && alpha < 0.999f &&
                 blend.src_rgb == 5 && (blend.dst_rgb == 2 || blend.dst_rgb == 6);
+            // The invocation trace contains a scene-copy mesh with alpha 0 on
+            // its first vertex, followed by partial-alpha vertices. Sampling
+            // only the first vertex misses it. Preserve v1 and inspect a
+            // bounded prefix of the remaining vertices when it did not match.
+            bool gradient_copy = false;
+            if (!remove_original && blend.src_rgb == 5 && (blend.dst_rgb == 2 || blend.dst_rgb == 6) &&
+                g_state.attribs.size() > 1) {
+                const VertexAttrib& color = g_state.attribs[1];
+                if (color.stream < g_state.streams.size() && color.stream < 16 &&
+                    !g_state.streams[color.stream].divisor) {
+                    const Range& vb = g_state.vertex_buffers[color.stream];
+                    const uint64_t stride = g_state.streams[color.stream].stride;
+                    const VkFormat format = vk_vertex_format(color.format);
+                    const uint32_t width = format == VK_FORMAT_R8G8B8A8_UNORM ? 4 :
+                        format == VK_FORMAT_R32G32B32A32_SFLOAT ? 16 : 0;
+                    // Require each read to be inside a pool and physically
+                    // contiguous, including for virtually mapped guest pools.
+                    auto checked_bytes = [](uint64_t address, uint32_t bytes) -> const uint8_t* {
+                        uint64_t offset = 0;
+                        MemoryPool* pool = pool_at_gpu(address, &offset);
+                        if (!pool || !bytes || offset > pool->size || bytes > pool->size - offset) return nullptr;
+                        const uint64_t first = pool_host(*pool, offset);
+                        const uint64_t last = pool_host(*pool, offset + bytes - 1);
+                        return first && last >= first && last - first == bytes - 1 ?
+                            reinterpret_cast<const uint8_t*>(first) : nullptr;
+                    };
+                    const int count = indexed ? c.i[0] : c.i[1];
+                    float minimum = 1.0f, maximum = 0.0f;
+                    uint32_t samples = 0;
+                    for (int k = 0; width && stride && k < std::min(count, 64); ++k) {
+                        int64_t vertex = int64_t(c.i[0]) + k;
+                        if (indexed) {
+                            const uint32_t bytes = c.mask == 0 ? 1 : c.mask == 1 ? 2 : 4;
+                            const uint64_t delta = uint64_t(k) * bytes;
+                            if (c.a[0] > UINT64_MAX - delta) continue;
+                            const uint8_t* entry = checked_bytes(c.a[0] + delta, bytes);
+                            if (!entry) continue;
+                            uint32_t index = 0;
+                            std::memcpy(&index, entry, bytes);
+                            vertex = int64_t(index) + int64_t(c.i[1]);
+                        }
+                        if (vertex < 0 || !vb.address || uint64_t(vertex) > vb.size / stride) continue;
+                        const uint64_t base_offset = uint64_t(vertex) * stride;
+                        if (color.offset > vb.size - base_offset) continue;
+                        const uint64_t at = base_offset + color.offset;
+                        if (at > vb.size || width > vb.size - at || vb.address > UINT64_MAX - at) continue;
+                        const uint8_t* data = checked_bytes(vb.address + at, width);
+                        if (!data) continue;
+                        float value = -1.0f;
+                        if (width == 4) value = float(data[3]) / 255.0f;
+                        else std::memcpy(&value, data + 12, sizeof value);
+                        if (!(value >= 0.0f && value <= 1.0f)) continue;
+                        minimum = std::min(minimum, value), maximum = std::max(maximum, value);
+                        ++samples;
+                        if ((value > 0.001f && value < 0.999f) ||
+                            (samples > 1 && maximum - minimum > 0.001f)) {
+                            gradient_copy = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            const bool remove_copy = remove_original || gradient_copy;
             if (remove_copy) {
                 static uint64_t skipped = 0;
                 if (++skipped <= 12 || skipped % 1000 == 0) {
@@ -796,6 +859,12 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                         (unsigned long long)skipped, (unsigned long long)g_frame.load(),
                         source->width, source->height, destination ? destination->width : 0,
                         destination ? destination->height : 0, alpha, blend.src_rgb, blend.dst_rgb);
+                }
+                if (gradient_copy) {
+                    static uint64_t gradients = 0;
+                    if (++gradients <= 12 || gradients % 1000 == 0)
+                        log("p4g: gradient scene-copy removed count=%llu frame=%llu first-alpha=%g",
+                            (unsigned long long)gradients, (unsigned long long)g_frame.load(), alpha);
                 }
                 return false;
             }
