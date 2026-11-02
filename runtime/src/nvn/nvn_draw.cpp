@@ -851,6 +851,48 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             }
         }
     }
+    {   // Inventory sampled sources without changing coordinates or rendering.
+        static std::set<std::string> sources;
+        static bool announced = false;
+        if (!announced) {
+            announced = true;
+            log("p4g: texture diagnostic sources-v2 (at most 1024 records)");
+        }
+        const bool watched = vs->hash == "2fe82df0569b75ff" || vs->hash == "8e2b4a6cdf80ae80" ||
+                             vs->hash == "547d293498cbedcf";
+        if (watched && sources.size() < 1024) {
+            for (size_t slot = 0; slot < g_textures.handles.size() &&
+                                  slot < g_textures.bindings.size() && sources.size() < 1024; ++slot) {
+                uint64_t texture = 0;
+                SamplerInfo sampler;
+                texture_for(g_textures.handles[slot], texture, sampler);
+                const Texture* tx = texture ? get<Texture>(texture) : nullptr;
+                if (!tx) continue;
+                const bool rendered = tx->image && tx->image->rendered;
+                char detail[160];
+                std::snprintf(detail, sizeof detail, " slot=%zu tex=%llx %ux%u format=%x rendered=%u depth=%u",
+                    slot, (unsigned long long)texture, tx->width, tx->height, tx->format,
+                    unsigned(rendered), unsigned(key.depth.depth_test));
+                const std::string signature = vs->hash + "/" + (fs ? fs->hash : "-") + detail;
+                if (!sources.insert(signature).second) continue;
+                float matrix[16] = {};
+                bool have_matrix = false;
+                const Range& uniform = g_state.uniforms[0][3];
+                if (uniform.address && uniform.size >= sizeof matrix) {
+                    if (const uint8_t* data = guest_bytes(uniform.address)) {
+                        std::memcpy(matrix, data, sizeof matrix);
+                        have_matrix = true;
+                    }
+                }
+                log("p4g: texture-use frame=%llu vs=%s fs=%s%s target=%ux%u c3=%u diag=(%g,%g,%g,%g)",
+                    (unsigned long long)g_frame.load(), vs->hash.c_str(), fs ? fs->hash.c_str() : "-", detail,
+                    g_pass_extent.width, g_pass_extent.height, unsigned(have_matrix),
+                    matrix[0], matrix[5], matrix[10], matrix[15]);
+                if (sources.size() == 1024)
+                    log("p4g: texture diagnostic limit reached; no more texture-use records");
+            }
+        }
+    }
     set_dynamic(cb, vp, sc);
 
     trace_skin(indexed, c, vs, fs);
