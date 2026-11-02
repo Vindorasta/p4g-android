@@ -19,6 +19,40 @@ import java.security.MessageDigest;
 final class BundledShaders {
     private BundledShaders() {}
 
+    private static String digest(InputStream in) throws Exception {
+        MessageDigest sha = MessageDigest.getInstance("SHA-256");
+        byte[] bytes = new byte[16384];
+        for (int n; (n = in.read(bytes)) != -1;) sha.update(bytes, 0, n);
+        StringBuilder result = new StringBuilder();
+        for (byte b : sha.digest()) result.append(String.format(java.util.Locale.ROOT, "%02x", b & 255));
+        return result.toString();
+    }
+
+    private static String fileDigest(File file) throws IOException {
+        try (InputStream in = new FileInputStream(file)) { return digest(in); }
+        catch (Exception e) { throw new IOException("Nao foi possivel verificar " + file.getName(), e); }
+    }
+
+    private static void backup(File file, String hash) throws IOException {
+        File saved = new File(file.getParentFile(), file.getName() + ".before-pack-" + hash.substring(0, 12));
+        if (saved.exists()) {
+            if (!hash.equals(fileDigest(saved))) throw new IOException("Backup de shader divergente: " + saved.getName());
+            return;
+        }
+        AtomicFile atomic = new AtomicFile(saved);
+        FileOutputStream out = null;
+        try (InputStream in = new FileInputStream(file)) {
+            out = atomic.startWrite();
+            byte[] bytes = new byte[16384];
+            for (int n; (n = in.read(bytes)) != -1;) out.write(bytes, 0, n);
+            atomic.finishWrite(out);
+            out = null;
+        } catch (IOException e) {
+            if (out != null) atomic.failWrite(out);
+            throw e;
+        }
+    }
+
     private static boolean validHeader(File file) {
         if (!file.isFile() || file.length() < 20 || file.length() % 4 != 0) return false;
         try (DataInputStream in = new DataInputStream(new FileInputStream(file))) {
@@ -49,6 +83,11 @@ final class BundledShaders {
 
     static synchronized void install(Context context) throws IOException {
         AssetManager assets = context.getAssets();
+        final String packId;
+        try (InputStream in = assets.open("spirv/manifest.tsv")) { packId = digest(in); }
+        catch (Exception e) { throw new IOException("Nao foi possivel verificar o pacote de shaders.", e); }
+        android.content.SharedPreferences preferences = context.getSharedPreferences("shader-pack", Context.MODE_PRIVATE);
+        final boolean updatingPack = !packId.equals(preferences.getString("installed-manifest", ""));
         File directory = new File(Launcher.dataDir(), "spirv");
         if (!directory.isDirectory() && !directory.mkdirs())
             throw new IOException("Nao foi possivel criar a pasta spirv.");
@@ -78,8 +117,15 @@ final class BundledShaders {
                     try (FileInputStream recovery = atomic.openRead()) { /* recovery only */ }
                     catch (IOException ignored) { /* retry installation below */ }
                 }
-                // Keep user-installed fixes and shaders not in this bundled pack.
-                if (metadata ? validResults(target) : validHeader(target)) { ++kept; continue; }
+                // A new pack must migrate valid-but-patched shaders as well.
+                // Back up differing existing files before replacing them. Once
+                // this exact pack is installed, later manual changes are kept.
+                final boolean valid = metadata ? validResults(target) : validHeader(target);
+                if (target.isFile() && updatingPack) {
+                    String existing = fileDigest(target);
+                    if (valid && entry[1].equals(existing)) { ++kept; continue; }
+                    backup(target, existing);
+                } else if (valid) { ++kept; continue; }
                 FileOutputStream out = null;
                 try (InputStream in = assets.open("spirv/" + entry[0])) {
                     MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -109,6 +155,8 @@ final class BundledShaders {
             }
         }
         if (total == 0 || !resultsListed) throw new IOException("O pacote de shaders esta sem results.tsv.");
+        if (!preferences.edit().putString("installed-manifest", packId).commit())
+            throw new IOException("Nao foi possivel registrar a instalacao dos shaders.");
         Log.i("P4G-Shaders", "Pack: " + total + "; instalados: " + installed + "; preservados: " + kept);
     }
 }

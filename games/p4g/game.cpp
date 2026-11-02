@@ -16,7 +16,6 @@ const game::Info game::kInfo = {
 };
 
 void game::after_init() {
-    setenv("NX_FLIP_Y", "1", 0);
 
     log("p4g: runtime initialized");
     log("p4g: beginning game-specific initialization");
