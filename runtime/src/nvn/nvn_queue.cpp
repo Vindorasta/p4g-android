@@ -23,6 +23,7 @@
 #endif
 
 #include "nvn.h"
+#include "nvn_frame_pacing.h"
 #include "nvn_ultrawide.h"
 #include "platform.h"
 
@@ -583,19 +584,35 @@ void WindowSetPresentInterval(CPU& c) {
 // Frame pacing: a present returns no earlier than the window's present interval (in 60 Hz vsyncs) after the previous
 // one. On the Switch the texture-available sync of the next acquire does this; ours is signaled at once, so without
 // it the game runs as fast as it can once it is faster than 60 fps. A late frame is not snapped to the next vsync
-// (an 18 ms frame stays 18 ms, not 33). NX_NO_FRAME_LIMIT=1: unpaced.
+// (an 18 ms frame stays 18 ms, not 33). An explicit launcher cap applies here
+// for every game, independently of Wonder's frame_time_probe above.
 void pace_present(int interval) {
     static const bool off = std::getenv("NX_NO_FRAME_LIMIT") != nullptr;
-    static uint64_t next = 0;
-    if (off || interval <= 0) return;
+    static const bool cap30 = [] {
+        const char* e = std::getenv("NX_FPS_CAP");
+        const int cap = e ? std::atoi(e) : 0;
+        if (cap > 0 && cap <= 30) {
+            log("nvn: FPS limit 30: host presentation capped (all games)");
+            return true;
+        }
+        return false;
+    }();
+    static PresentPacer pacer;
+    const uint64_t period = present_period_ns(interval, display_period_ns(), off, cap30);
     uint64_t now = plat::monotonic_ns();
-    if (next > now) plat::sleep_ns(next - now), now = plat::monotonic_ns();
+    const uint64_t deadline = pacer.deadline(now, period);
+    if (!period) return;
+    while (now < deadline) {
+        plat::sleep_ns(deadline - now);
+        now = plat::monotonic_ns();
+    }
+    // Base the next wait on the actual release time. Never catch up with a
+    // burst of short frames after a slow frame or an oversleep.
+    pacer.presented(now);
     static uint64_t presents = 0, at2 = 0;  // how often the game asks for 30 fps (interval 2), per 600 presents
     at2 += interval >= 2;
     if (++presents % 600 == 0)
         log("nvn: %llu of the last 600 presents at interval >= 2", (unsigned long long)at2), at2 = 0, log_wait_sites();
-    uint64_t period = uint64_t(interval) * display_period_ns();
-    next = (next > now || now - next < period ? next : now) + period;
 }
 
 void QueuePresentTexture(CPU& c) {
@@ -618,13 +635,15 @@ void QueuePresentTexture(CPU& c) {
         static uint64_t queued[2] = {};
         static int next_slot = 0;
         worker_wait(queued[next_slot]);
+        // Throttle before enqueueing the GPU present, not after: the queue
+        // must not receive a burst of uncapped frames ahead of the wait.
+        pace_present(w->interval);
         if (int(c.x[2]) >= 0 && size_t(c.x[2]) < w->textures.size()) {
             uint64_t texture = w->textures[size_t(c.x[2])];
             std::array<int32_t, 4> crop{w->crop[0], w->crop[1], w->crop[2], w->crop[3]};
             queued[next_slot] = worker_run([texture, crop, origin] { gpu_present(texture, crop.data(), origin); });
             next_slot ^= 1;
         }
-        pace_present(w->interval);
     }
     work_from = plat::monotonic_ns();
     uint64_t n = ++g_presents;
