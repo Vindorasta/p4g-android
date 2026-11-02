@@ -832,47 +832,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         vp.x *= 0.75f, vp.y *= 0.75f, vp.width *= 0.75f, vp.height *= 0.75f;
         sc = {{sc.offset.x * 3 / 4, sc.offset.y * 3 / 4}, {sc.extent.width * 3 / 4, sc.extent.height * 3 / 4}};
     }
-    // P4G controlled experiment: only unculled, non-stencilled UI sprites
-    // with a real depth attachment and a source not marked as rendered.
-    // The screen-copy and blur shaders never enter this branch.
-    bool local_sprite = false;
-    const bool sprite_shader = vs->hash == "547d293498cbedcf" && fs && fs->hash == "7247e449c951a72f";
-    const GpuImage* sprite_source = sprite_shader && g_textures.resolved.size() == 1 &&
-        g_textures.resolved[0].texture ? image_of(g_textures.resolved[0].texture) : nullptr;
-    if (sprite_source && !sprite_source->rendered && key.depth_format != VK_FORMAT_UNDEFINED &&
-        key.depth.depth_test && !key.depth.stencil_test && key.polygon.cull == 0)
-        local_sprite = true;
-    static bool sprite_test_announced = false;
-    if (!sprite_test_announced) {
-        sprite_test_announced = true;
-        log("p4g: local sprite orientation test v1");
-    }
-    if (!local_sprite) vp.y += vp.height, vp.height = -vp.height;
-    if (sprite_shader && sprite_source) {
-        static std::set<std::string> sprite_reports;
-        if (sprite_reports.size() < 512) {
-            char tag[160];
-            std::snprintf(tag, sizeof tag, "%llx/%ux%u/%u/%u/%u/%u",
-                (unsigned long long)g_textures.resolved[0].texture, g_pass_extent.width, g_pass_extent.height,
-                unsigned(sprite_source->rendered), unsigned(key.depth_format != VK_FORMAT_UNDEFINED),
-                unsigned(key.depth.stencil_test), unsigned(local_sprite));
-            if (sprite_reports.insert(tag).second) {
-                float c3[8] = {};
-                bool valid = false;
-                // Maxwell c3 is NVN uniform slot 0, not slot 3.
-                const Range& uniform = g_state.uniforms[0][0];
-                if (uniform.address && uniform.size >= 16) {
-                    if (const uint8_t* data = guest_bytes(uniform.address)) {
-                        std::memcpy(c3, data, size_t(std::min<uint64_t>(uniform.size, sizeof c3)));
-                        valid = true;
-                    }
-                }
-                log("p4g: sprite-local frame=%llu source=%s changed=%u c3valid=%u row0=(%g,%g,%g,%g) row1=(%g,%g,%g,%g)",
-                    (unsigned long long)g_frame.load(), tag, unsigned(local_sprite), unsigned(valid),
-                    c3[0], c3[1], c3[2], c3[3], c3[4], c3[5], c3[6], c3[7]);
-            }
-        }
-    }
+    vp.y += vp.height, vp.height = -vp.height;
     {   // Compact effect diagnostics: one record per shader/state combination per 5 s.
         // This inventories usage; it does not identify an effect by its hash alone.
         static std::map<std::string, uint64_t> reports;
