@@ -44,6 +44,7 @@
 #include "kernel.h"
 #include "platform.h"
 #include "platform_android.h"
+#include "android_surface_size.h"
 #if NX_NCE
 #include "nce/nce.h"
 #endif
@@ -400,15 +401,23 @@ const char* vulkan_surface_extension() { return VK_KHR_ANDROID_SURFACE_EXTENSION
 
 int vulkan_create_surface(void* instance, void* native_window, uint64_t* surface, void* gipa) {
     ANativeWindow* win = static_cast<ANativeWindow*>(native_window);
+    // Remove a previous requested buffer size before measuring the window.
+    // Otherwise getWidth/getHeight can report the old 16:9 buffer instead of
+    // the device's actual surface, perpetuating compositor stretching.
+    if (win) {
+        const int reset = ANativeWindow_setBuffersGeometry(win, 0, 0, 0);
+        if (reset) nx::log("android: reset buffer geometry -> %d", reset);
+    }
     uint32_t rw = 0, rh = 0;
     window_size(rw, rh);
     if (win && rw && rh) {
         int32_t cur_w = ANativeWindow_getWidth(win), cur_h = ANativeWindow_getHeight(win);
-        bool portrait = cur_w < cur_h;
-        int32_t bw = int32_t(portrait ? std::min(rw, rh) : std::max(rw, rh));
-        int32_t bh = int32_t(portrait ? std::max(rw, rh) : std::min(rw, rh));
-        int r_geom = ANativeWindow_setBuffersGeometry(win, bw, bh, 0);
-        nx::log("android: setBuffersGeometry %dx%d (screen %dx%d) -> %d", bw, bh, cur_w, cur_h, r_geom);
+        if (cur_w > 0 && cur_h > 0) {
+            const auto size = android_surface_size(uint32_t(cur_w), uint32_t(cur_h), rw, rh);
+            int r_geom = ANativeWindow_setBuffersGeometry(win, int32_t(size.width), int32_t(size.height), 0);
+            nx::log("android: aspect-preserving buffer %ux%u (screen %dx%d, selected %ux%u) -> %d",
+                    size.width, size.height, cur_w, cur_h, rw, rh, r_geom);
+        }
     }
     auto create = reinterpret_cast<PFN_vkCreateAndroidSurfaceKHR>(reinterpret_cast<PFN_vkGetInstanceProcAddr>(gipa)(
         static_cast<VkInstance>(instance), "vkCreateAndroidSurfaceKHR"));
