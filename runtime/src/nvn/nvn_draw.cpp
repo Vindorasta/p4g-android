@@ -743,41 +743,12 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             }
         }
     }
-    // Battle-entry experiment: ec20 also projects a captured scene during the
-    // transition. Use its original vertex projection only for equal-size,
-    // rendered scene reads, retaining the corrected shader for atlas effects.
-    // kP4gAlertSpirv is the validated original ec20 vertex shader already used
-    // by the alert exception; no new shader binary is needed here.
-    if (vs->hash == "ec20aad1520546db" && fs && fs->hash == "18ad01dc70644d6f" &&
-        g_textures.resolved.size() == 1 && t.color_count && t.colors[0]) {
-        const uint64_t texture = g_textures.resolved[0].texture;
-        const GpuImage* source = texture ? image_of(texture) : nullptr;
-        const GpuImage* destination = image_of(t.colors[0]);
-        if (source && destination && source->rendered && texture != t.colors[0] &&
-            source->width >= 640 && source->height >= 360 &&
-            source->width == destination->width && source->height == destination->height &&
-            std::abs(int64_t(source->width) * 9 - int64_t(source->height) * 16) <= 16) {
-            static const std::unique_ptr<ShaderInfo> original_scene_projection = [vs] {
-                auto result = std::make_unique<ShaderInfo>(*vs);
-                result->hash = kP4gAlertHash;
-                result->spirv.assign(kP4gAlertSpirv,
-                    kP4gAlertSpirv + sizeof(kP4gAlertSpirv) / sizeof(uint32_t));
-                return result;
-            }();
-            key.vs = original_scene_projection.get();
-            static uint64_t scene_draws = 0;
-            if (++scene_draws <= 8 || scene_draws % 1000 == 0)
-                log("p4g: transition scene projection v1 draws=%llu frame=%llu source=%ux%u target=%ux%u",
-                    (unsigned long long)scene_draws, (unsigned long long)g_frame.load(),
-                    source->width, source->height, destination->width, destination->height);
-        }
-    }
     // Optional visual compromise: suppress partial-alpha scene feedback copies.
     // Keep opaque scene transfer passes and ordinary atlas sprites unchanged.
     static bool removal_announced = false;
     if (!removal_announced) {
         removal_announced = true;
-        log("p4g: scene-copy removal v2 active (v1 + gradient vertex alpha)");
+        log("p4g: selective scene-copy v1 (restore uniform translucent quads; keep additive/gradient removal)");
     }
     if (vs->hash == "547d293498cbedcf" && fs && fs->hash == "7247e449c951a72f" &&
         g_textures.resolved.size() == 1 && g_state.color.blend_enable[0] &&
@@ -817,12 +788,16 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             const BlendTarget& blend = g_state.blend[0];
             const bool remove_original = alpha > 0.001f && alpha < 0.999f &&
                 blend.src_rgb == 5 && (blend.dst_rgb == 2 || blend.dst_rgb == 6);
+            const int vertex_count = indexed ? c.i[0] : c.i[1];
+            const bool restore_candidate = remove_original && blend.dst_rgb == 6 &&
+                (indexed ? vertex_count == 6 : (vertex_count == 4 || vertex_count == 6));
+            bool uniform_quad = false;
             // The invocation trace contains a scene-copy mesh with alpha 0 on
             // its first vertex, followed by partial-alpha vertices. Sampling
             // only the first vertex misses it. Preserve v1 and inspect a
             // bounded prefix of the remaining vertices when it did not match.
             bool gradient_copy = false;
-            if (!remove_original && blend.src_rgb == 5 && (blend.dst_rgb == 2 || blend.dst_rgb == 6) &&
+            if ((!remove_original || restore_candidate) && blend.src_rgb == 5 && (blend.dst_rgb == 2 || blend.dst_rgb == 6) &&
                 g_state.attribs.size() > 1) {
                 const VertexAttrib& color = g_state.attribs[1];
                 if (color.stream < g_state.streams.size() && color.stream < 16 &&
@@ -874,12 +849,31 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                         if ((value > 0.001f && value < 0.999f) ||
                             (samples > 1 && maximum - minimum > 0.001f)) {
                             gradient_copy = true;
-                            break;
+                            if (!restore_candidate) break;
                         }
                     }
+                    uniform_quad = restore_candidate && count > 0 && samples == uint32_t(count) &&
+                        maximum - minimum <= 0.001f;
                 }
             }
-            const bool remove_copy = remove_original || gradient_copy;
+            // Reuse the original aligned fragment variant only for fully
+            // inspected, constant-alpha quads. Additive copies and gradients
+            // retain the removal behavior confirmed on the phone.
+            if (uniform_quad) {
+                static const std::unique_ptr<ShaderInfo> aligned_scene = [fs] {
+                    auto result = std::make_unique<ShaderInfo>(*fs);
+                    result->hash = kP4gOverlayAlignedHash;
+                    result->spirv.assign(kP4gOverlayAlignedSpirv,
+                        kP4gOverlayAlignedSpirv + sizeof(kP4gOverlayAlignedSpirv) / sizeof(uint32_t));
+                    return result;
+                }();
+                key.fs = aligned_scene.get();
+                static uint64_t restored = 0;
+                if (++restored <= 8 || restored % 1000 == 0)
+                    log("p4g: original scene layer restored count=%llu frame=%llu alpha=%g",
+                        (unsigned long long)restored, (unsigned long long)g_frame.load(), alpha);
+            }
+            const bool remove_copy = !uniform_quad && (remove_original || gradient_copy);
             if (remove_copy) {
                 static uint64_t skipped = 0;
                 if (++skipped <= 12 || skipped % 1000 == 0) {
