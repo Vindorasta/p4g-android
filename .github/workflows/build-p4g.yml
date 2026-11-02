@@ -1,5 +1,5 @@
 
-name: Persona 4 Golden Android
+name: P4G Pre-alpha
 
 on:
   workflow_dispatch:
@@ -443,19 +443,19 @@ jobs:
             --ks-type PKCS12 \
             --ks-pass env:P4G_SIGNING_PASSWORD \
             --key-pass env:P4G_SIGNING_PASSWORD \
-            --out build-apk/p4g-android-alpha.apk \
+            --out build-apk/p4g-0.0.1-pre-alpha.apk \
             build-apk/aligned.apk
 
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs \
-            build-apk/p4g-android-alpha.apk
-          test -s build-apk/p4g-android-alpha.apk
+            build-apk/p4g-0.0.1-pre-alpha.apk
+          test -s build-apk/p4g-0.0.1-pre-alpha.apk
 
 
       - name: Upload P4G APK
         uses: actions/upload-artifact@v4
         with:
-          name: Persona-4-Golden-Android-Alpha
-          path: build-apk/p4g-android-alpha.apk
+          name: P4G-0.0.1-Pre-Alpha
+          path: build-apk/p4g-0.0.1-pre-alpha.apk
           if-no-files-found: error
 
       - name: Upload shader packaging diagnostics
