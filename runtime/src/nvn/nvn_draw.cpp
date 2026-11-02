@@ -743,15 +743,16 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             }
         }
     }
-    // P4G experiment: a separate fragment variant for a translucent copy of
-    // a rendered scene. Geometry, viewport and the original shaders stay intact.
-    static bool overlay_announced = false;
-    if (!overlay_announced) {
-        overlay_announced = true;
-        log("p4g: overlay alignment v4 (additive equal-size + upscale test; downscale excluded)");
+    // Optional visual compromise: suppress partial-alpha scene feedback copies.
+    // Keep opaque scene transfer passes and ordinary atlas sprites unchanged.
+    static bool removal_announced = false;
+    if (!removal_announced) {
+        removal_announced = true;
+        log("p4g: scene-copy removal v1 active (partial-alpha 547d/7247 scene reads)");
     }
     if (vs->hash == "547d293498cbedcf" && fs && fs->hash == "7247e449c951a72f" &&
-        g_textures.resolved.size() == 1 && g_state.color.blend_enable[0]) {
+        g_textures.resolved.size() == 1 && g_state.color.blend_enable[0] &&
+        t.color_count && t.colors[0]) {
         const uint64_t texture = g_textures.resolved[0].texture;
         const GpuImage* source = texture ? image_of(texture) : nullptr;
         if (source && source->rendered && texture != t.colors[0] &&
@@ -785,53 +786,18 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                 }
             }
             const BlendTarget& blend = g_state.blend[0];
-            // The hub trace reads a 1920x1080 image into the 960x540 world
-            // before the 8e2b filter. V2 incorrectly flipped that intermediate
-            // read. V3 also excluded the opposite, 960x540 -> 1920x1080
-            // composition seen in nx (11). Allow additive upscaling as a
-            // separate experiment, retaining the downscale exclusion and v1's
-            // independently confirmed translucent selection. Resolution is a
-            // stage heuristic here, not proof of image orientation.
-            const bool additive = blend.dst_rgb == 2;
-            const GpuImage* destination = t.color_count && t.colors[0] ? image_of(t.colors[0]) : nullptr;
-            const bool same_or_larger = destination && destination->width >= source->width &&
-                destination->height >= source->height;
-            const bool align = alpha > 0.001f && alpha < 0.999f && blend.src_rgb == 5 &&
-                (blend.dst_rgb == 6 || (additive && same_or_larger));
-            if (additive) {
-                static std::set<std::string> additive_reports;
-                char description[240];
-                std::snprintf(description, sizeof description,
-                    "source=%ux%u target=%ux%u alpha=%g aligned=%u",
-                    source->width, source->height, destination ? destination->width : 0,
-                    destination ? destination->height : 0, alpha, unsigned(align));
-                if (additive_reports.size() < 24 && additive_reports.insert(description).second)
-                    log("p4g: additive selection v4 frame=%llu %s", (unsigned long long)g_frame.load(), description);
-            }
-            static std::set<std::string> overlay_reports;
-            if (overlay_reports.size() < 96) {
-                char description[200];
-                std::snprintf(description, sizeof description, "source=%llx %ux%u alpha=%g blend=%u/%u aligned=%u",
-                    (unsigned long long)texture, source->width, source->height, alpha,
-                    blend.src_rgb, blend.dst_rgb, unsigned(align));
-                if (overlay_reports.insert(description).second)
-                    log("p4g: overlay candidate frame=%llu %s", (unsigned long long)g_frame.load(), description);
-            }
-            if (align) {
-                static const std::unique_ptr<ShaderInfo> aligned = [fs] {
-                    auto variant = std::make_unique<ShaderInfo>(*fs);
-                    variant->hash = kP4gOverlayAlignedHash;
-                    variant->spirv.assign(kP4gOverlayAlignedSpirv,
-                        kP4gOverlayAlignedSpirv + sizeof(kP4gOverlayAlignedSpirv) / sizeof(uint32_t));
-                    return variant;
-                }();
-                key.fs = aligned.get();
-                static uint64_t aligned_draws[2] = {};
-                const uint64_t count = ++aligned_draws[additive ? 1 : 0];
-                if (count <= 8 || count % 1000 == 0)
-                    log("p4g: overlay aligned v4 %s draws=%llu frame=%llu alpha=%g",
-                        additive ? "additive" : "translucent", (unsigned long long)count,
-                        (unsigned long long)g_frame.load(), alpha);
+            const bool remove_copy = alpha > 0.001f && alpha < 0.999f &&
+                blend.src_rgb == 5 && (blend.dst_rgb == 2 || blend.dst_rgb == 6);
+            if (remove_copy) {
+                static uint64_t skipped = 0;
+                if (++skipped <= 12 || skipped % 1000 == 0) {
+                    const GpuImage* destination = image_of(t.colors[0]);
+                    log("p4g: scene-copy removed count=%llu frame=%llu source=%ux%u target=%ux%u alpha=%g blend=%u/%u",
+                        (unsigned long long)skipped, (unsigned long long)g_frame.load(),
+                        source->width, source->height, destination ? destination->width : 0,
+                        destination ? destination->height : 0, alpha, blend.src_rgb, blend.dst_rgb);
+                }
+                return false;
             }
         }
     }
