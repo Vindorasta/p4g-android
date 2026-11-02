@@ -23,6 +23,8 @@ jobs:
           set -euo pipefail
           c++ -std=c++17 -Wall -Wextra -Werror -I runtime/src tests/nvn_origin_test.cpp -o "$RUNNER_TEMP/nvn-origin-test"
           "$RUNNER_TEMP/nvn-origin-test"
+          c++ -std=c++17 -Wall -Wextra -Werror -I runtime/src tests/nvn_frame_pacing_test.cpp -o "$RUNNER_TEMP/nvn-frame-pacing-test"
+          "$RUNNER_TEMP/nvn-frame-pacing-test"
 
       - name: Verify P4G files
         shell: bash
