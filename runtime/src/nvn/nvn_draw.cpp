@@ -748,7 +748,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     static bool overlay_announced = false;
     if (!overlay_announced) {
         overlay_announced = true;
-        log("p4g: overlay alignment v3 (additive test restricted to equal-size scene composition)");
+        log("p4g: overlay alignment v4 (additive equal-size + upscale test; downscale excluded)");
     }
     if (vs->hash == "547d293498cbedcf" && fs && fs->hash == "7247e449c951a72f" &&
         g_textures.resolved.size() == 1 && g_state.color.blend_enable[0]) {
@@ -787,14 +787,17 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             const BlendTarget& blend = g_state.blend[0];
             // The hub trace reads a 1920x1080 image into the 960x540 world
             // before the 8e2b filter. V2 incorrectly flipped that intermediate
-            // read. Restrict the additive experiment to equal-size composition;
-            // retain v1's independently confirmed translucent selection.
+            // read. V3 also excluded the opposite, 960x540 -> 1920x1080
+            // composition seen in nx (11). Allow additive upscaling as a
+            // separate experiment, retaining the downscale exclusion and v1's
+            // independently confirmed translucent selection. Resolution is a
+            // stage heuristic here, not proof of image orientation.
             const bool additive = blend.dst_rgb == 2;
             const GpuImage* destination = t.color_count && t.colors[0] ? image_of(t.colors[0]) : nullptr;
-            const bool same_size = destination && destination->width == source->width &&
-                destination->height == source->height;
+            const bool same_or_larger = destination && destination->width >= source->width &&
+                destination->height >= source->height;
             const bool align = alpha > 0.001f && alpha < 0.999f && blend.src_rgb == 5 &&
-                (blend.dst_rgb == 6 || (additive && same_size));
+                (blend.dst_rgb == 6 || (additive && same_or_larger));
             if (additive) {
                 static std::set<std::string> additive_reports;
                 char description[240];
@@ -803,7 +806,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                     source->width, source->height, destination ? destination->width : 0,
                     destination ? destination->height : 0, alpha, unsigned(align));
                 if (additive_reports.size() < 24 && additive_reports.insert(description).second)
-                    log("p4g: additive selection v3 frame=%llu %s", (unsigned long long)g_frame.load(), description);
+                    log("p4g: additive selection v4 frame=%llu %s", (unsigned long long)g_frame.load(), description);
             }
             static std::set<std::string> overlay_reports;
             if (overlay_reports.size() < 96) {
@@ -826,7 +829,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                 static uint64_t aligned_draws[2] = {};
                 const uint64_t count = ++aligned_draws[additive ? 1 : 0];
                 if (count <= 8 || count % 1000 == 0)
-                    log("p4g: overlay aligned v3 %s draws=%llu frame=%llu alpha=%g",
+                    log("p4g: overlay aligned v4 %s draws=%llu frame=%llu alpha=%g",
                         additive ? "additive" : "translucent", (unsigned long long)count,
                         (unsigned long long)g_frame.load(), alpha);
             }
