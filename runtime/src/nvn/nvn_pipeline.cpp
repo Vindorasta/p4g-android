@@ -821,16 +821,9 @@ std::unique_ptr<PipeBuild> prepare_graphics_pipeline(const PipelineKey& key, con
     rs = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
     rs.polygonMode = key.polygon.mode == 0 ? VK_POLYGON_MODE_POINT : key.polygon.mode == 1 ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
     rs.cullMode = vk_cull(key.polygon.cull);
-    // NVNfrontFace CW 0 / CCW 1, taken as is: the draws use a negative-height viewport (nvn_draw.cpp) that gives NVN's
-    // upper-left-origin mapping, so windings match NVN's.
+    // Already normalized for the NVN window origin by the draw replay.
+    // No shader hash participates in face classification.
     rs.frontFace = key.polygon.front == 0 ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    
-    // Compensa a inversao vertical do vertex shader 3D do P4G.
-    if (key.vs && (key.vs->hash == "937df4e3272e6853" || key.vs->hash == "ec20aad1520546db" || key.vs->hash == "4ab4e0c12f0379e4")) {
-        rs.frontFace = (rs.frontFace == VK_FRONT_FACE_CLOCKWISE)
-            ? VK_FRONT_FACE_COUNTER_CLOCKWISE
-            : VK_FRONT_FACE_CLOCKWISE;
-    }
     rs.lineWidth = 1.0f;
     // SetDepthClamp: clamps instead of clipping at the near and far planes, like depthClampEnable (a device feature;
     // nvn_vk.cpp enables every core feature the GPU has, and MoltenVK has it through Metal's depth clip mode).

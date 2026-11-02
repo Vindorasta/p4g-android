@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "nvn_vk.h"
+#include "nvn_origin.h"
 #include "platform.h"
 
 #include <nx/game.h>
@@ -800,6 +801,7 @@ void gpu_present(uint64_t texture, const int32_t* crop, uint64_t origin_ns) {
         if (crop && crop[2] > 0 && crop[3] > 0 && crop[0] + crop[2] <= int32_t(src->width) &&
             crop[1] + crop[3] <= int32_t(src->height))  // nvnWindowSetCrop
             blit.srcOffsets[0] = {crop[0], crop[1], 0}, blit.srcOffsets[1] = {crop[0] + crop[2], crop[1] + crop[3], 1};
+        if (window_origin_lower_left()) std::swap(blit.srcOffsets[0].y, blit.srcOffsets[1].y);
         blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         blit.dstOffsets[1] = {int32_t(g_sc_extent.width), int32_t(g_sc_extent.height), 1};
         p_vkCmdBlitImage(g_cb, src->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst.image,

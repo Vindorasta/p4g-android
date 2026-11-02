@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "nvn_vk.h"
+#include "nvn_origin.h"
 #include "platform.h"
 #include "touch_layout.h"
 
@@ -425,8 +426,8 @@ bool present_pass_record(VkCommandBuffer cb, GpuImage& src, const int32_t* crop,
                                                                      : 0;
     std::memcpy(p.rot, kRot[r], 4 * sizeof(float));
     p.off[0] = kRot[r][4], p.off[1] = kRot[r][5];
-    static const bool flip_y = [] { const char* e = std::getenv("NX_FLIP_Y"); return e && e[0] == '1'; }();
-    if (flip_y) p.rot[1] = -p.rot[1], p.rot[3] = -p.rot[3], p.off[1] = 1.0f - p.off[1];  // the game draws upside down
+    const bool flip_y = window_origin_lower_left();
+    if (flip_y) p.rot[1] = -p.rot[1], p.rot[3] = -p.rot[3], p.off[1] = 1.0f - p.off[1];  // convert lower-left image rows for upright display
     // The part of the texture shown (nvnWindowSetCrop), fit into the upright target keeping its aspect.
     float cx = 0, cy = 0, cw = float(src.width), ch = float(src.height);
     if (crop && crop[2] > 0 && crop[3] > 0 && crop[0] + crop[2] <= int32_t(src.width) &&

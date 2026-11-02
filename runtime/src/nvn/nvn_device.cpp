@@ -5,6 +5,8 @@
 
 #include <nx/runtime.h>
 
+#include "nvn_origin.h"
+
 namespace nx {
 
 namespace {
@@ -138,19 +140,21 @@ void nvnDeviceSetDepthMode(CPU& c) {
 }
 void nvnDeviceGetDepthMode(CPU& c) { c.x[0] = g_depth_mode.load(); }
 
-// nvnDeviceSetWindowOriginMode(device, NVNwindowOriginMode) / Get: the replay always draws with NVN's upper-left
-// origin (1; a negative-height viewport, nvn_draw.cpp), what Wonder and P5R use. Lower-left (0) would be upside down.
-std::atomic<uint32_t> g_origin_mode{1};
+// Device window origin: 0 lower-left, 1 upper-left. Previously the
+// setter only affected Get; drawing always used upper-left mapping.
+std::atomic<uint32_t> g_origin_mode{0};
 void nvnDeviceSetWindowOriginMode(CPU& c) {
-    uint32_t mode = uint32_t(c.x[1]);
-    g_origin_mode = mode;
-    if (mode != 1) log("nvn: window origin mode %u: only upper-left (1) is drawn right", mode);
+    const uint32_t mode = uint32_t(c.x[1]);
+    if (mode > 1) { log("nvn: invalid window origin %u ignored", mode); return; }
+    g_origin_mode.store(mode, std::memory_order_relaxed);
+    log("nvn: window origin %s", mode ? "upper-left" : "lower-left");
 }
 void nvnDeviceGetWindowOriginMode(CPU& c) { c.x[0] = g_origin_mode.load(); }
 
 }  // namespace
 
 namespace nvn {
+bool window_origin_lower_left() { return g_origin_mode.load(std::memory_order_relaxed) == 0; }
 bool clip_z_minus_one() { return g_depth_mode.load(std::memory_order_relaxed) == 0; }
 }  // namespace nvn
 

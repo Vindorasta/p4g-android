@@ -30,7 +30,7 @@ std::atomic<uint64_t> g_pipelines{0}, g_pipeline_ns{0}, g_worker_pipelines{0}, g
 uint64_t g_waited = 0, g_waited_ns = 0, g_skipped = 0, g_prewarmed = 0;
 std::unordered_set<uint64_t> g_known;  // hashes of the records in the .keys file or already queued to it
 std::vector<WarmRec> g_new_recs;
-constexpr uint32_t kKeysMagic = 0x314b5750;  // "PWK1"
+constexpr uint32_t kKeysMagic = 0x324b5750;  // "PWK2": origin-normalized winding
 
 }  // namespace
 

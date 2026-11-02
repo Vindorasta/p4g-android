@@ -14,10 +14,9 @@
 #include <map>
 #include <memory>
 
-#include "nvn_p4g_overlay_aligned.inc"
-#include "nvn_p4g_named_sprites.inc"
 
 #include "nvn_draw_state.h"
+#include "nvn_origin.h"
 #include "nvn_ultrawide.h"
 #include "platform.h"
 
@@ -664,302 +663,16 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     }
 
     // Pipeline.
+    const bool lower_left = window_origin_lower_left();
+    static int reported_origin = -1;
+    if (reported_origin != int(lower_left)) {
+        reported_origin = int(lower_left);
+        log("nvn: origin replay %s (viewport, winding and presentation follow device state)",
+            lower_left ? "lower-left" : "upper-left");
+    }
     PipelineKey key;
     std::memset(&key, 0, sizeof key);  // the key is compared byte for byte
     key.vs = vs, key.fs = fs;
-    static bool named_sprite_announced = false;
-    if (!named_sprite_announced) {
-        named_sprite_announced = true;
-        log("p4g: named sprite orientation v2 ready (alert + square Rise texture; battle portrait untouched)");
-    }
-    // Identify the captured artwork by complete source content, never by its
-    // temporary address alone. Other assets using these shaders are untouched.
-    const bool named_sprite_stage = fs &&
-        ((vs->hash == "ec20aad1520546db" && fs->hash == "18ad01dc70644d6f") ||
-         (vs->hash == "547d293498cbedcf" && fs->hash == "7247e449c951a72f"));
-    if (named_sprite_stage && g_textures.resolved.size() == 1) {
-        const uint64_t handle = g_textures.resolved[0].texture;
-        Texture* tx = handle ? get<Texture>(handle) : nullptr;
-        const GpuImage* image = handle ? image_of(handle) : nullptr;
-        const bool dimensions_match = tx &&
-            ((tx->width == 256 && tx->height == 256 && tx->storage_size == 0x40000) ||
-             (tx->width == 512 && tx->height == 512 && tx->storage_size == 0x40000));
-        if (dimensions_match && image && !image->rendered && !tx->has_writes.load()) {
-            const MemoryPool* pool = tx->pool ? get<MemoryPool>(tx->pool) : nullptr;
-            if (pool && pool->memory && tx->offset <= pool->size &&
-                tx->storage_size <= pool->size - tx->offset && tx->memory == pool->memory + tx->offset) {
-                static std::map<std::string, std::string> fingerprints;
-                static uint64_t fingerprint_generation = 0;
-                const uint64_t generation = objects_lock().generation.load(std::memory_order_acquire);
-                if (generation != fingerprint_generation || fingerprints.size() >= 256) {
-                    fingerprints.clear();
-                    fingerprint_generation = generation;
-                }
-                char identity[128];
-                std::snprintf(identity, sizeof identity, "%llx/%llx/%llx",
-                    (unsigned long long)handle, (unsigned long long)tx->memory,
-                    (unsigned long long)tx->storage_size);
-                auto found = fingerprints.find(identity);
-                if (found == fingerprints.end())
-                    found = fingerprints.emplace(identity,
-                        sha1_hex(reinterpret_cast<const void*>(tx->memory), size_t(tx->storage_size))).first;
-                const std::string& fingerprint = found->second;
-                const bool alert = vs->hash == "ec20aad1520546db" &&
-                    fingerprint == "c64086dce996de327f2c18e318dba92252a8f9b1";
-                // Only the captured square portrait. The wide battle portrait
-                // is deliberately excluded. Preserve its geometry entirely.
-                const bool rise = vs->hash == "547d293498cbedcf" &&
-                    fingerprint == "abbbe38c68dcbe8d5985c04f612e1894aa42c862";
-                if (alert || rise) {
-                    if (alert) {
-                        // Original ec20 orientation only for the alert atlas;
-                        // the corrected ec20 on the phone still draws the aura.
-                        static const std::unique_ptr<ShaderInfo> variant = [vs] {
-                            auto result = std::make_unique<ShaderInfo>(*vs);
-                            result->hash = kP4gAlertHash;
-                            result->spirv.assign(kP4gAlertSpirv,
-                                kP4gAlertSpirv + sizeof(kP4gAlertSpirv) / sizeof(uint32_t));
-                            return result;
-                        }();
-                        key.vs = variant.get();
-                    } else {
-                        // Flip the sampled portrait, not its screen position,
-                        // circle, dialogue box or vertex winding.
-                        static const std::unique_ptr<ShaderInfo> variant = [fs] {
-                            auto result = std::make_unique<ShaderInfo>(*fs);
-                            result->hash = kP4gOverlayAlignedHash;
-                            result->spirv.assign(kP4gOverlayAlignedSpirv,
-                                kP4gOverlayAlignedSpirv + sizeof(kP4gOverlayAlignedSpirv) / sizeof(uint32_t));
-                            return result;
-                        }();
-                        key.fs = variant.get();
-                    }
-                    static uint64_t named_draws[2] = {};
-                    const uint64_t count = ++named_draws[alert ? 0 : 1];
-                    if (count <= 8 || count % 1000 == 0)
-                        log("p4g: named sprite orientation v2 %s frame=%llu content=%s",
-                            alert ? "alert" : "Rise texture-V", (unsigned long long)g_frame.load(), fingerprint.c_str());
-                }
-            }
-        }
-    }
-    static bool entry_effect_seen = false;
-    static uint64_t last_entry_effect_frame = 0;
-    // Battle-entry distortion experiment: suppress the ec20/18ad meshes that
-    // resample a full rendered scene into a distinct equal-size scene target.
-    // These draws occur during the entry effect in the captured trace. Keep
-    // the shader available for ordinary atlas-based aura/attack effects.
-    if (vs->hash == "ec20aad1520546db" && fs && fs->hash == "18ad01dc70644d6f" &&
-        indexed && g_textures.resolved.size() == 1 && t.color_count && t.colors[0] &&
-        g_state.depth.depth_test && !g_state.depth.depth_write && g_state.depth.depth_func == 2 &&
-        g_state.color.blend_enable[0] && g_state.blend[0].src_rgb == 5 &&
-        (g_state.blend[0].dst_rgb == 2 || g_state.blend[0].dst_rgb == 6)) {
-        const uint64_t texture = g_textures.resolved[0].texture;
-        const GpuImage* source = texture ? image_of(texture) : nullptr;
-        const GpuImage* destination = image_of(t.colors[0]);
-        if (source && destination && source->rendered && texture != t.colors[0] &&
-            source->width >= 640 && source->height >= 360 &&
-            source->width == destination->width && source->height == destination->height &&
-            std::abs(int64_t(source->width) * 9 - int64_t(source->height) * 16) <= 16) {
-            entry_effect_seen = true;
-            last_entry_effect_frame = g_frame.load();
-            static uint64_t skipped_distortion = 0;
-            if (++skipped_distortion <= 8 || skipped_distortion % 1000 == 0)
-                log("p4g: battle distortion suppressed v1 count=%llu frame=%llu source=%ux%u target=%ux%u",
-                    (unsigned long long)skipped_distortion, (unsigned long long)g_frame.load(),
-                    source->width, source->height, destination->width, destination->height);
-            return false;
-        }
-    }
-    // Entry zoom also uses a988 to repeatedly copy/expand the full scene.
-    // In the two recorded batches, this six-vertex, depth-writing scene-copy
-    // path occurs only in the battle-entry interval, not the attack interval.
-    if (vs->hash == "547d293498cbedcf" && fs && fs->hash == "a988505474266a8c" &&
-        !indexed && c.i[1] == 6 && g_textures.resolved.size() == 1 && t.color_count && t.colors[0] &&
-        g_state.depth.depth_test && g_state.depth.depth_write && g_state.depth.depth_func == 8 &&
-        g_state.color.blend_enable[0] && g_state.blend[0].src_rgb == 5 && g_state.blend[0].dst_rgb == 6) {
-        const uint64_t texture = g_textures.resolved[0].texture;
-        const GpuImage* source = texture ? image_of(texture) : nullptr;
-        const GpuImage* destination = image_of(t.colors[0]);
-        if (source && destination && source->rendered && texture != t.colors[0] &&
-            source->width >= 640 && source->height >= 360 &&
-            source->width == destination->width && source->height == destination->height &&
-            std::abs(int64_t(source->width) * 9 - int64_t(source->height) * 16) <= 16) {
-            entry_effect_seen = true;
-            last_entry_effect_frame = g_frame.load();
-            static uint64_t skipped_zoom = 0;
-            if (++skipped_zoom <= 8 || skipped_zoom % 1000 == 0)
-                log("p4g: battle zoom suppressed v2 count=%llu frame=%llu source=%ux%u target=%ux%u",
-                    (unsigned long long)skipped_zoom, (unsigned long long)g_frame.load(),
-                    source->width, source->height, destination->width, destination->height);
-            return false;
-        }
-    }
-    // Optional visual compromise: suppress partial-alpha scene feedback copies.
-    // Keep opaque scene transfer passes and ordinary atlas sprites unchanged.
-    static bool removal_announced = false;
-    if (!removal_announced) {
-        removal_announced = true;
-        log("p4g: selective scene-copy v1 (restore uniform translucent quads; keep additive/gradient removal)");
-    }
-    if (vs->hash == "547d293498cbedcf" && fs && fs->hash == "7247e449c951a72f" &&
-        g_textures.resolved.size() == 1 && g_state.color.blend_enable[0] &&
-        t.color_count && t.colors[0]) {
-        const uint64_t texture = g_textures.resolved[0].texture;
-        const GpuImage* source = texture ? image_of(texture) : nullptr;
-        if (source && source->rendered && texture != t.colors[0] &&
-            source->width >= 640 && source->height >= 360 &&
-            std::abs(int64_t(source->width) * 9 - int64_t(source->height) * 16) <= 16) {
-            float alpha = -1;
-            if (g_state.attribs.size() > 1) {
-                const VertexAttrib& color = g_state.attribs[1];
-                if (color.stream < g_state.streams.size() && color.stream < 16 &&
-                    !g_state.streams[color.stream].divisor) {
-                    const Range& vb = g_state.vertex_buffers[color.stream];
-                    int64_t vertex = indexed ? int64_t(c.i[1]) : int64_t(c.i[0]);
-                    bool index_ok = true;
-                    if (indexed) {
-                        const uint8_t* indices = guest_bytes(c.a[0]);
-                        uint32_t first = 0;
-                        const uint32_t bytes = c.mask == 0 ? 1 : c.mask == 1 ? 2 : 4;
-                        if (indices && c.i[0] > 0) std::memcpy(&first, indices, bytes);
-                        else index_ok = false;
-                        vertex += first;
-                    }
-                    if (index_ok && vertex >= 0 && vb.address) {
-                        const uint64_t offset = uint64_t(vertex) * g_state.streams[color.stream].stride + color.offset;
-                        const uint8_t* data = guest_bytes(vb.address);
-                        const VkFormat format = vk_vertex_format(color.format);
-                        if (data && format == VK_FORMAT_R8G8B8A8_UNORM && offset + 4 <= vb.size)
-                            alpha = float(data[offset + 3]) / 255.0f;
-                        else if (data && format == VK_FORMAT_R32G32B32A32_SFLOAT && offset + 16 <= vb.size)
-                            std::memcpy(&alpha, data + offset + 12, sizeof alpha);
-                    }
-                }
-            }
-            const BlendTarget& blend = g_state.blend[0];
-            const bool remove_original = alpha > 0.001f && alpha < 0.999f &&
-                blend.src_rgb == 5 && (blend.dst_rgb == 2 || blend.dst_rgb == 6);
-            const int vertex_count = indexed ? c.i[0] : c.i[1];
-            const bool restore_candidate = remove_original && blend.dst_rgb == 6 &&
-                (indexed ? vertex_count == 6 : (vertex_count == 4 || vertex_count == 6));
-            bool uniform_quad = false;
-            // The invocation trace contains a scene-copy mesh with alpha 0 on
-            // its first vertex, followed by partial-alpha vertices. Sampling
-            // only the first vertex misses it. Preserve v1 and inspect a
-            // bounded prefix of the remaining vertices when it did not match.
-            bool gradient_copy = false;
-            if ((!remove_original || restore_candidate) && blend.src_rgb == 5 && (blend.dst_rgb == 2 || blend.dst_rgb == 6) &&
-                g_state.attribs.size() > 1) {
-                const VertexAttrib& color = g_state.attribs[1];
-                if (color.stream < g_state.streams.size() && color.stream < 16 &&
-                    !g_state.streams[color.stream].divisor) {
-                    const Range& vb = g_state.vertex_buffers[color.stream];
-                    const uint64_t stride = g_state.streams[color.stream].stride;
-                    const VkFormat format = vk_vertex_format(color.format);
-                    const uint32_t width = format == VK_FORMAT_R8G8B8A8_UNORM ? 4 :
-                        format == VK_FORMAT_R32G32B32A32_SFLOAT ? 16 : 0;
-                    // Require each read to be inside a pool and physically
-                    // contiguous, including for virtually mapped guest pools.
-                    auto checked_bytes = [](uint64_t address, uint32_t bytes) -> const uint8_t* {
-                        uint64_t offset = 0;
-                        MemoryPool* pool = pool_at_gpu(address, &offset);
-                        if (!pool || !bytes || offset > pool->size || bytes > pool->size - offset) return nullptr;
-                        const uint64_t first = pool_host(*pool, offset);
-                        const uint64_t last = pool_host(*pool, offset + bytes - 1);
-                        return first && last >= first && last - first == bytes - 1 ?
-                            reinterpret_cast<const uint8_t*>(first) : nullptr;
-                    };
-                    const int count = indexed ? c.i[0] : c.i[1];
-                    float minimum = 1.0f, maximum = 0.0f;
-                    uint32_t samples = 0;
-                    for (int k = 0; width && stride && k < std::min(count, 64); ++k) {
-                        int64_t vertex = int64_t(c.i[0]) + k;
-                        if (indexed) {
-                            const uint32_t bytes = c.mask == 0 ? 1 : c.mask == 1 ? 2 : 4;
-                            const uint64_t delta = uint64_t(k) * bytes;
-                            if (c.a[0] > UINT64_MAX - delta) continue;
-                            const uint8_t* entry = checked_bytes(c.a[0] + delta, bytes);
-                            if (!entry) continue;
-                            uint32_t index = 0;
-                            std::memcpy(&index, entry, bytes);
-                            vertex = int64_t(index) + int64_t(c.i[1]);
-                        }
-                        if (vertex < 0 || !vb.address || uint64_t(vertex) > vb.size / stride) continue;
-                        const uint64_t base_offset = uint64_t(vertex) * stride;
-                        if (color.offset > vb.size - base_offset) continue;
-                        const uint64_t at = base_offset + color.offset;
-                        if (at > vb.size || width > vb.size - at || vb.address > UINT64_MAX - at) continue;
-                        const uint8_t* data = checked_bytes(vb.address + at, width);
-                        if (!data) continue;
-                        float value = -1.0f;
-                        if (width == 4) value = float(data[3]) / 255.0f;
-                        else std::memcpy(&value, data + 12, sizeof value);
-                        if (!(value >= 0.0f && value <= 1.0f)) continue;
-                        minimum = std::min(minimum, value), maximum = std::max(maximum, value);
-                        ++samples;
-                        if ((value > 0.001f && value < 0.999f) ||
-                            (samples > 1 && maximum - minimum > 0.001f)) {
-                            gradient_copy = true;
-                            if (!restore_candidate) break;
-                        }
-                    }
-                    uniform_quad = restore_candidate && count > 0 && samples == uint32_t(count) &&
-                        maximum - minimum <= 0.001f;
-                }
-            }
-            // Reuse the original aligned fragment variant only for fully
-            // inspected, constant-alpha quads. Additive copies and gradients
-            // retain the removal behavior confirmed on the phone.
-            // nx (15) restores alpha=254/255 quads just after entry. Test
-            // suppressing that near-opaque scene replay only within a short
-            // entry window, preserving the exploration-layer restoration.
-            const uint64_t now_frame = g_frame.load();
-            const bool recent_entry = entry_effect_seen && now_frame >= last_entry_effect_frame &&
-                now_frame - last_entry_effect_frame <= 90;
-            const bool entry_flash = uniform_quad && recent_entry && alpha >= 0.99f;
-            const bool restore_uniform_layer = uniform_quad && !entry_flash;
-            if (entry_flash) {
-                static uint64_t skipped_flash = 0;
-                if (++skipped_flash <= 12 || skipped_flash % 1000 == 0)
-                    log("p4g: post-entry scene flash suppressed v1 count=%llu frame=%llu after=%llu alpha=%g",
-                        (unsigned long long)skipped_flash, (unsigned long long)now_frame,
-                        (unsigned long long)(now_frame - last_entry_effect_frame), alpha);
-            }
-            if (restore_uniform_layer) {
-                static const std::unique_ptr<ShaderInfo> aligned_scene = [fs] {
-                    auto result = std::make_unique<ShaderInfo>(*fs);
-                    result->hash = kP4gOverlayAlignedHash;
-                    result->spirv.assign(kP4gOverlayAlignedSpirv,
-                        kP4gOverlayAlignedSpirv + sizeof(kP4gOverlayAlignedSpirv) / sizeof(uint32_t));
-                    return result;
-                }();
-                key.fs = aligned_scene.get();
-                static uint64_t restored = 0;
-                if (++restored <= 8 || restored % 1000 == 0)
-                    log("p4g: original scene layer restored count=%llu frame=%llu alpha=%g",
-                        (unsigned long long)restored, (unsigned long long)g_frame.load(), alpha);
-            }
-            const bool remove_copy = !restore_uniform_layer && (remove_original || gradient_copy);
-            if (remove_copy) {
-                static uint64_t skipped = 0;
-                if (++skipped <= 12 || skipped % 1000 == 0) {
-                    const GpuImage* destination = image_of(t.colors[0]);
-                    log("p4g: scene-copy removed count=%llu frame=%llu source=%ux%u target=%ux%u alpha=%g blend=%u/%u",
-                        (unsigned long long)skipped, (unsigned long long)g_frame.load(),
-                        source->width, source->height, destination ? destination->width : 0,
-                        destination ? destination->height : 0, alpha, blend.src_rgb, blend.dst_rgb);
-                }
-                if (gradient_copy) {
-                    static uint64_t gradients = 0;
-                    if (++gradients <= 12 || gradients % 1000 == 0)
-                        log("p4g: gradient scene-copy removed count=%llu frame=%llu first-alpha=%g",
-                            (unsigned long long)gradients, (unsigned long long)g_frame.load(), alpha);
-                }
-                return false;
-            }
-        }
-    }
     key.topology = mode;
     key.attrib_count = uint32_t(std::min<size_t>(g_state.attribs.size(), 16));
     std::copy_n(g_state.attribs.begin(), key.attrib_count, key.attribs);
@@ -967,6 +680,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     std::copy_n(g_state.streams.begin(), key.stream_count, key.streams);
     std::copy_n(g_state.blend, 8, key.blend);
     key.color = g_state.color, key.mask = g_state.mask, key.depth = g_state.depth, key.polygon = g_state.polygon;
+    key.polygon.front = origin_front_face(lower_left, g_state.polygon.front);
     // NX_HUD_KEEP_ALPHA=1 (P5R by default, games/p5r/game.cpp): draws into the HUD/menu targets (RGBA8, 1280 wide or
     // more, depth tested) with plain alpha blending leave the target's alpha alone. P5R builds alpha on purpose with
     // its own states (alpha-only masks, MIN/MAX/REVERSE_SUBTRACT; the panels' drop shadows), sets it to 0 under the
@@ -1085,11 +799,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     if (g_state.has_viewport)
         vp = {float(g_state.viewport[0]), float(g_state.viewport[1]), float(g_state.viewport[2]),
               float(g_state.viewport[3]), g_state.depth_near, g_state.depth_far};
-    // NVN's upper-left window origin (what Wonder sets) maps NDC +Y to the top of the render target, like D3D;
-    // Vulkan maps it to the bottom. A negative-height viewport gives NVN's mapping, and with it NVN's front faces.
-    // (Before this, the front face was inverted instead: triangles were culled right, but every render target was
-    // upside down, which the post chain undid in some scenes and not in others: the first course showed a
-    // mirrored sky.)
+    // Scissors stay in the same logical image-row coordinates as NVN.
     VkRect2D sc{{0, 0}, g_pass_extent};
     if (g_state.has_scissor)
         sc = {{std::max(0, g_state.scissor[0]), std::max(0, g_state.scissor[1])},
@@ -1129,25 +839,9 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         vp.x *= 0.75f, vp.y *= 0.75f, vp.width *= 0.75f, vp.height *= 0.75f;
         sc = {{sc.offset.x * 3 / 4, sc.offset.y * 3 / 4}, {sc.extent.width * 3 / 4, sc.extent.height * 3 / 4}};
     }
-    vp.y += vp.height, vp.height = -vp.height;
-    {   // Compact effect diagnostics: one record per shader/state combination per 5 s.
-        // This inventories usage; it does not identify an effect by its hash alone.
-        static std::map<std::string, uint64_t> reports;
-        char state[160];
-        std::snprintf(state, sizeof state, " rt=%ux%u depth=%u blend=%u cull=%u viewportY=%s",
-            g_pass_extent.width, g_pass_extent.height, unsigned(key.depth.depth_test),
-            unsigned(key.color.blend_enable[0]), unsigned(key.polygon.cull), vp.height < 0 ? "negative" : "positive");
-        const std::string tag = "vs=" + vs->hash + " fs=" + (fs ? fs->hash : "-") + state;
-        auto it = reports.find(tag);
-        if (it != reports.end() || reports.size() < 128) {
-            const uint64_t now = plat::monotonic_ns();
-            if (it == reports.end() || now - it->second >= 5'000'000'000ull) {
-                reports[tag] = now;
-                log("p4g: effects-use t=%.3f frame=%llu %s", double(now) / 1e9,
-                    (unsigned long long)g_frame.load(), tag.c_str());
-            }
-        }
-    }
+    const OriginViewport mapped = origin_viewport(lower_left, vp.y, vp.height);
+    vp.y = mapped.y, vp.height = mapped.height;
+
     set_dynamic(cb, vp, sc);
 
     trace_skin(indexed, c, vs, fs);
