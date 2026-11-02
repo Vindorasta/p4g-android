@@ -25,6 +25,8 @@ jobs:
           "$RUNNER_TEMP/nvn-origin-test"
           c++ -std=c++17 -Wall -Wextra -Werror -I runtime/src tests/nvn_frame_pacing_test.cpp -o "$RUNNER_TEMP/nvn-frame-pacing-test"
           "$RUNNER_TEMP/nvn-frame-pacing-test"
+          c++ -std=c++17 -Wall -Wextra -Werror -I runtime/src tests/android_surface_size_test.cpp -o "$RUNNER_TEMP/android-surface-size-test"
+          "$RUNNER_TEMP/android-surface-size-test"
 
       - name: Verify P4G files
         shell: bash
