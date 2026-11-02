@@ -515,6 +515,11 @@ bool present_pass_record(VkCommandBuffer cb, GpuImage& src, const int32_t* crop,
     p_vkCmdPushConstants(cb, g.layout, kPushStages, 0, sizeof p, &p);
     p_vkCmdDraw(cb, 3, 1, 0, 0);
     if (count && g.overlay) {  // the touch controls: a quad per circle, blended over the picture (overlay.frag)
+        if (flip_y) {  // Keep the overlay upright independently of the game's vertical flip.
+            Push q = p;
+            q.rot[1] = -q.rot[1], q.rot[3] = -q.rot[3], q.off[1] = 1.0f - q.off[1];
+            p_vkCmdPushConstants(cb, g.layout, kPushStages, 0, sizeof q, &q);
+        }
         p_vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g.overlay);
         p_vkCmdDraw(cb, 4, uint32_t(count), 0, 0);
     }
