@@ -743,6 +743,35 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             }
         }
     }
+    // Battle-entry experiment: ec20 also projects a captured scene during the
+    // transition. Use its original vertex projection only for equal-size,
+    // rendered scene reads, retaining the corrected shader for atlas effects.
+    // kP4gAlertSpirv is the validated original ec20 vertex shader already used
+    // by the alert exception; no new shader binary is needed here.
+    if (vs->hash == "ec20aad1520546db" && fs && fs->hash == "18ad01dc70644d6f" &&
+        g_textures.resolved.size() == 1 && t.color_count && t.colors[0]) {
+        const uint64_t texture = g_textures.resolved[0].texture;
+        const GpuImage* source = texture ? image_of(texture) : nullptr;
+        const GpuImage* destination = image_of(t.colors[0]);
+        if (source && destination && source->rendered && texture != t.colors[0] &&
+            source->width >= 640 && source->height >= 360 &&
+            source->width == destination->width && source->height == destination->height &&
+            std::abs(int64_t(source->width) * 9 - int64_t(source->height) * 16) <= 16) {
+            static const std::unique_ptr<ShaderInfo> original_scene_projection = [vs] {
+                auto result = std::make_unique<ShaderInfo>(*vs);
+                result->hash = kP4gAlertHash;
+                result->spirv.assign(kP4gAlertSpirv,
+                    kP4gAlertSpirv + sizeof(kP4gAlertSpirv) / sizeof(uint32_t));
+                return result;
+            }();
+            key.vs = original_scene_projection.get();
+            static uint64_t scene_draws = 0;
+            if (++scene_draws <= 8 || scene_draws % 1000 == 0)
+                log("p4g: transition scene projection v1 draws=%llu frame=%llu source=%ux%u target=%ux%u",
+                    (unsigned long long)scene_draws, (unsigned long long)g_frame.load(),
+                    source->width, source->height, destination->width, destination->height);
+        }
+    }
     // Optional visual compromise: suppress partial-alpha scene feedback copies.
     // Keep opaque scene transfer passes and ordinary atlas sprites unchanged.
     static bool removal_announced = false;
