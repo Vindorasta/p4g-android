@@ -161,10 +161,29 @@ uint64_t touch_button(float x, float y) {
 
 }  // namespace
 
-int32_t on_input(android_app*, AInputEvent* e) {
+int32_t on_input(android_app* app, AInputEvent* e) {
     std::lock_guard lk(g_in);
     int32_t type = AInputEvent_getType(e);
     int32_t src = AInputEvent_getSource(e);
+    // NativeActivity can deliver phone Back straight to this input queue,
+    // bypassing Java dispatchKeyEvent. Keep controller Back mapped to Minus.
+    if (type == AINPUT_EVENT_TYPE_KEY && AKeyEvent_getKeyCode(e) == AKEYCODE_BACK &&
+        (src & AINPUT_SOURCE_GAMEPAD) != AINPUT_SOURCE_GAMEPAD &&
+        (src & AINPUT_SOURCE_JOYSTICK) != AINPUT_SOURCE_JOYSTICK) {
+        JNIEnv* env = nullptr;
+        bool attached = app->activity->vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK;
+        if (!attached && app->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK) return 0;
+        jclass activity = env->GetObjectClass(app->activity->clazz);
+        jmethodID confirm = env->GetMethodID(activity, "confirmExit", "()V");
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        if (confirm && AKeyEvent_getAction(e) == AKEY_EVENT_ACTION_UP) {
+            env->CallVoidMethod(app->activity->clazz, confirm);
+            if (env->ExceptionCheck()) env->ExceptionClear();
+        }
+        env->DeleteLocalRef(activity);
+        if (!attached) app->activity->vm->DetachCurrentThread();
+        if (confirm) return 1;
+    }
     if (type == AINPUT_EVENT_TYPE_KEY) {
         uint64_t b = key_to_button(AKeyEvent_getKeyCode(e));
         if (!b) return 0;
