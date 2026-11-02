@@ -54,6 +54,9 @@ final class Lang {
     }
 
     static {
+        put("Installing bundled shaders...", "Installing bundled shaders...", "Installing bundled shaders...",
+                "Installing bundled shaders...", "Instalando shaders incluídos...", "Installing bundled shaders...",
+                "Installing bundled shaders...", "Installing bundled shaders...", "Installing bundled shaders...");
         put("Output resolution", "Output resolution", "Output resolution", "Output resolution", "Resolução de saída", "Output resolution", "Output resolution", "Output resolution", "Output resolution");
         put("Texture detail", "Texture detail", "Texture detail", "Texture detail", "Detalhe das texturas", "Texture detail", "Texture detail", "Texture detail", "Texture detail");
         put("FPS limit", "FPS limit", "FPS limit", "FPS limit", "Limite de FPS", "FPS limit", "FPS limit", "FPS limit", "FPS limit");

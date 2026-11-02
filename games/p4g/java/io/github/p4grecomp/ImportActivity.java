@@ -685,6 +685,8 @@ public class ImportActivity extends Activity {
                             .availableProcessors()
                     );
 
+                    // Install the runtime hash pack separately from numbered GXP output.
+                    BundledShaders.install(ImportActivity.this);
                     rc = Importer.run(
                         pfd.getFd(),
                         name == null ? "" : name,

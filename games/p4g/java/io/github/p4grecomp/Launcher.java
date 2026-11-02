@@ -520,45 +520,79 @@ public class Launcher extends Activity {
         root.addView(play, lp);
         play.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onClick(View v) {
-                if (!hasAccess()) {
-                    askAccess();
-                    return;
-                }
-                if (gameUri() != null) {  // the game file the player picked
-                    if (!gameReadable()) pick(PICK_GAME, "*/*", false);
-                    else if (!hasKeys()) pick(PICK_KEYS, "*/*", true);
-                    else if (!prepared()) prepare();
-                    else if (openGameForRuntime()) {
-                        save();
-                        Log.i("P4G-Launch", "Iniciando NativeActivity do P4G");
-                        try {
-                            startActivity(new Intent(Launcher.this, android.app.NativeActivity.class));
-                        } catch (Exception e) {
-                            Log.e("P4G-Launch", "Falha ao iniciar NativeActivity", e);
-                            tell("Falha ao iniciar P4G", String.valueOf(e.getMessage()));
-                        }
-                    } else {
-                        tell(t("No se pudo abrir el juego", "The game could not be opened"), gameName());
-                    }
-                    return;
-                }
-                if (!hasData()) {
-                    pick(PICK_GAME, "*/*", false);
-                    return;
-                }
-                if (wrongBuild() != null) {
-                    refresh();
-                    return;
-                }
-                save();
-                startActivity(new Intent(Launcher.this, android.app.NativeActivity.class));
-            }
+            public void onClick(View v) { installShadersAndPlay(); }
         });
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(root);
         setContentView(scroll);
+    }
+
+    boolean installingShaders;
+
+    void installShadersAndPlay() {
+        if (installingShaders) return;
+        if (!hasAccess()) { askAccess(); return; }
+        installingShaders = true;
+        play.setEnabled(false);
+        status.setText(t("Instalando shaders incluidos...", "Installing bundled shaders..."));
+        new Thread(new Runnable() {
+            @Override public void run() {
+                String error = null;
+                try { BundledShaders.install(Launcher.this); }
+                catch (Exception e) { error = String.valueOf(e.getMessage()); }
+                final String failure = error;
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        installingShaders = false;
+                        if (isFinishing() || isDestroyed()) return;
+                        play.setEnabled(true);
+                        if (failure != null) {
+                            refresh();
+                            tell(t("Shaders", "Shaders"), failure);
+                        } else {
+                            launchAfterShaderInstall();
+                        }
+                    }
+                });
+            }
+        }, "P4G-shader-install").start();
+    }
+
+    void launchAfterShaderInstall() {
+
+        if (!hasAccess()) {
+            askAccess();
+            return;
+        }
+        if (gameUri() != null) {  // the game file the player picked
+            if (!gameReadable()) pick(PICK_GAME, "*/*", false);
+            else if (!hasKeys()) pick(PICK_KEYS, "*/*", true);
+            else if (!prepared()) prepare();
+            else if (openGameForRuntime()) {
+                save();
+                Log.i("P4G-Launch", "Iniciando NativeActivity do P4G");
+                try {
+                    startActivity(new Intent(Launcher.this, android.app.NativeActivity.class));
+                } catch (Exception e) {
+                    Log.e("P4G-Launch", "Falha ao iniciar NativeActivity", e);
+                    tell("Falha ao iniciar P4G", String.valueOf(e.getMessage()));
+                }
+            } else {
+                tell(t("No se pudo abrir el juego", "The game could not be opened"), gameName());
+            }
+            return;
+        }
+        if (!hasData()) {
+            pick(PICK_GAME, "*/*", false);
+            return;
+        }
+        if (wrongBuild() != null) {
+            refresh();
+            return;
+        }
+        save();
+        startActivity(new Intent(Launcher.this, android.app.NativeActivity.class));
     }
 
     void refresh() {
