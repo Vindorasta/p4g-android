@@ -670,7 +670,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     static bool named_sprite_announced = false;
     if (!named_sprite_announced) {
         named_sprite_announced = true;
-        log("p4g: named sprite orientation v1 ready (3 captured content IDs)");
+        log("p4g: named sprite orientation v2 ready (alert + square Rise texture; battle portrait untouched)");
     }
     // Identify the captured artwork by complete source content, never by its
     // temporary address alone. Other assets using these shaders are untouched.
@@ -683,7 +683,6 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         const GpuImage* image = handle ? image_of(handle) : nullptr;
         const bool dimensions_match = tx &&
             ((tx->width == 256 && tx->height == 256 && tx->storage_size == 0x40000) ||
-             (tx->width == 512 && tx->height == 256 && tx->storage_size == 0x80000) ||
              (tx->width == 512 && tx->height == 512 && tx->storage_size == 0x40000));
         if (dimensions_match && image && !image->rendered && !tx->has_writes.load()) {
             const MemoryPool* pool = tx->pool ? get<MemoryPool>(tx->pool) : nullptr;
@@ -707,9 +706,10 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                 const std::string& fingerprint = found->second;
                 const bool alert = vs->hash == "ec20aad1520546db" &&
                     fingerprint == "c64086dce996de327f2c18e318dba92252a8f9b1";
-                const bool rise = vs->hash == "547d293498cbedcf" && g_state.polygon.cull == 0 &&
-                    (fingerprint == "f5c0ff91d96572dea7bd789ee4d42afedc1943e6" ||
-                     fingerprint == "abbbe38c68dcbe8d5985c04f612e1894aa42c862");
+                // Only the captured square portrait. The wide battle portrait
+                // is deliberately excluded. Preserve its geometry entirely.
+                const bool rise = vs->hash == "547d293498cbedcf" &&
+                    fingerprint == "abbbe38c68dcbe8d5985c04f612e1894aa42c862";
                 if (alert || rise) {
                     if (alert) {
                         // Original ec20 orientation only for the alert atlas;
@@ -723,20 +723,22 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                         }();
                         key.vs = variant.get();
                     } else {
-                        static const std::unique_ptr<ShaderInfo> variant = [vs] {
-                            auto result = std::make_unique<ShaderInfo>(*vs);
-                            result->hash = kP4gRiseHash;
-                            result->spirv.assign(kP4gRiseSpirv,
-                                kP4gRiseSpirv + sizeof(kP4gRiseSpirv) / sizeof(uint32_t));
+                        // Flip the sampled portrait, not its screen position,
+                        // circle, dialogue box or vertex winding.
+                        static const std::unique_ptr<ShaderInfo> variant = [fs] {
+                            auto result = std::make_unique<ShaderInfo>(*fs);
+                            result->hash = kP4gOverlayAlignedHash;
+                            result->spirv.assign(kP4gOverlayAlignedSpirv,
+                                kP4gOverlayAlignedSpirv + sizeof(kP4gOverlayAlignedSpirv) / sizeof(uint32_t));
                             return result;
                         }();
-                        key.vs = variant.get();
+                        key.fs = variant.get();
                     }
                     static uint64_t named_draws[2] = {};
                     const uint64_t count = ++named_draws[alert ? 0 : 1];
                     if (count <= 8 || count % 1000 == 0)
-                        log("p4g: named sprite orientation v1 %s frame=%llu content=%s",
-                            alert ? "alert" : "Rise", (unsigned long long)g_frame.load(), fingerprint.c_str());
+                        log("p4g: named sprite orientation v2 %s frame=%llu content=%s",
+                            alert ? "alert" : "Rise texture-V", (unsigned long long)g_frame.load(), fingerprint.c_str());
                 }
             }
         }
