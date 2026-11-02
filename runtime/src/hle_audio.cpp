@@ -146,7 +146,7 @@ void InitializeAudioOutParameter(CPU& c) {  // {u32 sample_rate; u16 channels; u
 }
 
 void OpenDefaultAudioOut(CPU& c) {  // (AudioOut*, os::SystemEvent*, const AudioOutParameter&)
-    log("audio: diagnostic build queue-state-v1");
+    log("audio: diagnostic build queue-state-v2");
     uint64_t out = c.x[0], sysev = c.x[1];
     {
         const uint32_t rate = ld<uint32_t>(c.x[2]), ch = ld<uint16_t>(c.x[2] + 4);
@@ -192,6 +192,18 @@ void StopAudioOut(CPU&) {
 }
 
 void CloseAudioOut(CPU&) {}
+
+// OpenDefaultAudioOut creates our opaque handle, not an SDK AudioOut object.
+// Report our own playback state instead of letting the SDK read that object.
+// AudioOutState: Started = 0, Stopped = 1 (not a boolean).
+void GetAudioOutState(CPU& c) {
+    std::lock_guard lk(g_out.lock);
+    c.x[0] = g_out.started ? 0 : 1;
+    static unsigned reports = 0;
+    if (reports++ < 8)
+        log("audio: HLE GetAudioOutState -> %llu (started=%u)",
+            (unsigned long long)c.x[0], unsigned(g_out.started));
+}
 
 void SetAudioOutBufferInfo(CPU& c) {  // (AudioOutBuffer*, void* data, size_t capacity, size_t size)
     st<uint64_t>(c.x[0], c.x[1]);
@@ -617,6 +629,7 @@ NX_HLE("_ZN2nn5audio41GetActiveAudioDeviceChannelCountForOutputEv", two);
 NX_HLE("_ZN2nn5audio27InitializeAudioOutParameterEPNS0_17AudioOutParameterE", InitializeAudioOutParameter);
 NX_HLE("_ZN2nn5audio19OpenDefaultAudioOutEPNS0_8AudioOutEPNS_2os11SystemEventERKNS0_17AudioOutParameterE", OpenDefaultAudioOut);
 NX_HLE("_ZN2nn5audio13StartAudioOutEPNS0_8AudioOutE", StartAudioOut);
+NX_HLE("_ZN2nn5audio16GetAudioOutStateEPKNS0_8AudioOutE", GetAudioOutState);
 NX_HLE("_ZN2nn5audio12StopAudioOutEPNS0_8AudioOutE", StopAudioOut);
 NX_HLE("_ZN2nn5audio13CloseAudioOutEPNS0_8AudioOutE", CloseAudioOut);
 NX_HLE("_ZN2nn5audio21SetAudioOutBufferInfoEPNS0_14AudioOutBufferEPvmm", SetAudioOutBufferInfo);
