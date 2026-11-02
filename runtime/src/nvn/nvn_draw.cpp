@@ -551,6 +551,11 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         g_stats.no_vertex++;
         return false;
     }
+    static bool sprite_scene_seen = false;
+    if (!sprite_scene_seen && vs->hash == "937df4e3272e6853") {
+        sprite_scene_seen = true;
+        log("p4g: sprite texture capture v1 armed (96 images, 16 million pixels maximum)");
+    }
     std::vector<const ShaderInfo*> swapped;  // NX_SWAP_FS / NX_SKIP_FS (nvn_draw_trace.cpp)
     if (!debug_shader_overrides(shaders, fs, swapped)) return false;
     const ProgramLayout& layout = program_layout(*shaders);
@@ -643,6 +648,53 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     }
 
     build_sets(cb, *shaders, layout);
+    // Read source artwork automatically after uploads, without changing its
+    // coordinates. Captures identify assets for a later targeted correction.
+    if (plat::kDiagnostics && sprite_scene_seen && vs->hash == "547d293498cbedcf" && fs &&
+        (fs->hash == "7247e449c951a72f" || fs->hash == "a988505474266a8c")) {
+        static std::set<std::string> sprite_sources, sprite_content;
+        static uint64_t sprite_pixels = 0;
+        if (sprite_content.size() < 96 && sprite_pixels < 16'000'000ull) {
+            for (const auto& resolved : g_textures.resolved) {
+                if (sprite_content.size() >= 96) break;
+                Texture* tx = resolved.texture ? get<Texture>(resolved.texture) : nullptr;
+                GpuImage* img = resolved.texture ? image_of(resolved.texture) : nullptr;
+                if (!tx || !img || !img->uploaded || img->rendered || !img->image ||
+                    !(img->aspect & VK_IMAGE_ASPECT_COLOR_BIT) || img->layout == VK_IMAGE_LAYOUT_UNDEFINED ||
+                    img->width < 32 || img->height < 32 || img->width > 1024 || img->height > 1024)
+                    continue;
+                const uint64_t pixels = uint64_t(img->width) * img->height;
+                if (sprite_pixels + pixels > 16'000'000ull) continue;
+                char identity[160];
+                std::snprintf(identity, sizeof identity, "%llx/%llx/%ux%u/%llx",
+                    (unsigned long long)resolved.texture, (unsigned long long)tx->memory,
+                    img->width, img->height, (unsigned long long)tx->storage_size);
+                if (!sprite_sources.insert(identity).second) continue;
+                std::string fingerprint = identity;
+                if (const MemoryPool* pool = tx->pool ? get<MemoryPool>(tx->pool) : nullptr;
+                    pool && pool->memory && tx->storage_size && tx->offset <= pool->size &&
+                    tx->storage_size <= pool->size - tx->offset && tx->memory == pool->memory + tx->offset)
+                    fingerprint = sha1_hex(reinterpret_cast<const void*>(tx->memory), size_t(tx->storage_size));
+                if (!sprite_content.insert(fingerprint).second) continue;
+                const uint64_t tag = 0xE9000000ull + sprite_content.size();
+                draw_end_rendering(cb, 6);
+                g_snap_layer = g_snap_level = 0;
+                debug_snapshot(cb, *img, tag);
+                sprite_pixels += pixels;
+                float projection[4] = {};
+                const Range& uniform = g_state.uniforms[0][0];
+                if (uniform.address && uniform.size >= sizeof projection)
+                    if (const uint8_t* data = guest_bytes(uniform.address))
+                        std::memcpy(projection, data, sizeof projection);
+                log("p4g: sprite asset %llx frame=%llu source=%s %ux%u fs=%s fingerprint=%s c3=(%g,%g,%g,%g)",
+                    (unsigned long long)tag, (unsigned long long)g_frame.load(), identity,
+                    img->width, img->height, fs->hash.c_str(), fingerprint.c_str(),
+                    projection[0], projection[1], projection[2], projection[3]);
+                if (sprite_content.size() == 96)
+                    log("p4g: sprite texture capture limit reached");
+            }
+        }
+    }
     // Vertex and index data before the pass begins: a range a dispatch of this submit wrote may need a GPU copy
     // (nvn_written.cpp), which cannot be recorded inside a pass.
     DrawInputs in;
