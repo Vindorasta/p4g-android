@@ -3,6 +3,9 @@
 // the game (released + system event signalled) when it has been played, so the device clock paces FMOD's mixer.
 // Without a device the same pacing runs on a timer. Audio input reports no devices. SDK 16 games (Wonder) use the
 // AudioRenderer instead, rendered in process; its final mix goes to the same device (see below).
+//
+// P3P change: the channel count the game asks for in OpenDefaultAudioOut (6 for Persona 3 Portable) is kept and
+// reported back by GetAudioOutChannelCount; buffers with more than 2 channels are folded to stereo before the device.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -31,6 +34,7 @@ struct Out {
     std::condition_variable cv;
     std::deque<uint64_t> queued, released;
     std::shared_ptr<EventState> event = std::make_shared<EventState>();
+    uint32_t channels = 2;  // from the AudioOutParameter of the open
     bool started = false;
     // statistics since the last log (every 1000 buffers)
     uint64_t buffers = 0, silent = 0;
@@ -96,11 +100,28 @@ void player() {
             g_out.queued.pop_front();
             size = ld<uint64_t>(buf + 16);
         }
-        if (device && plat::audio_submit(reinterpret_cast<const void*>(ld<uint64_t>(buf)), size,
+        uint64_t out_size = size;
+        if (g_out.channels > 2) {  // fold to stereo in place (the game refills the buffer every time)
+            int16_t* pcm = reinterpret_cast<int16_t*>(ld<uint64_t>(buf));
+            const uint32_t ch = g_out.channels;
+            const uint64_t frames = size / (2ull * ch);
+            for (uint64_t i = 0; i < frames; i++) {
+                const int16_t* f = pcm + i * ch;
+                int l = f[0], r = f[1];
+                if (ch >= 6) {  // FL FR FC LFE RL RR
+                    l += (f[2] * 707 + f[4] * 707) / 1000;
+                    r += (f[2] * 707 + f[5] * 707) / 1000;
+                }
+                pcm[2 * i] = int16_t(std::clamp(l, -32768, 32767));
+                pcm[2 * i + 1] = int16_t(std::clamp(r, -32768, 32767));
+            }
+            out_size = frames * 4;
+        }
+        if (device && plat::audio_submit(reinterpret_cast<const void*>(ld<uint64_t>(buf)), out_size,
                                          reinterpret_cast<void*>(buf)))
             continue;
         next = std::max(next, clock::now() - std::chrono::milliseconds(50));
-        next += std::chrono::microseconds(size * 1000000 / kBytesPerSecond);
+        next += std::chrono::microseconds(size * 1000000 / (kBytesPerSecond / 2 * g_out.channels));
         std::this_thread::sleep_until(next);
         release(reinterpret_cast<void*>(buf));
     }
@@ -114,6 +135,11 @@ void InitializeAudioOutParameter(CPU& c) {  // {u32 sample_rate; u16 channels; u
 
 void OpenDefaultAudioOut(CPU& c) {  // (AudioOut*, os::SystemEvent*, const AudioOutParameter&)
     uint64_t out = c.x[0], sysev = c.x[1];
+    {
+        const uint32_t rate = ld<uint32_t>(c.x[2]), ch = ld<uint16_t>(c.x[2] + 4);
+        g_out.channels = ch ? ch : 2;
+        log("audio: OpenDefaultAudioOut: requested %u Hz, %u channels (0 = default) -> %u", rate, ch, g_out.channels);
+    }
     // Give the guest a system event backed by our kernel event: nn::os::AttachSystemEvent(type, read, managed,
     // write, managed, clear mode = manual).
     auto w = std::make_shared<KEvent>();
@@ -179,11 +205,13 @@ void GetReleasedAudioOutBuffer(CPU& c) {
 }
 
 // What the output is, for games that ask (P5R's CRI mixer sizes its buffers from these; the sdk's own versions read
-// the fields a real OpenDefaultAudioOut fills, which ours does not): 48 kHz, stereo, PcmInt16 (SampleFormat 2).
+// the fields a real OpenDefaultAudioOut fills, which ours does not): 48 kHz, PcmInt16 (SampleFormat 2), and the
+// channel count the game asked for when it opened the output (2 when it did not say).
 void GetAudioOutSampleRate(CPU& c) { c.x[0] = 48000; }
 void GetAudioOutChannelCount(CPU& c) {
-    c.x[0] = 6;
-    log("p4g: AudioOut channel count = 6");
+    static int n = 0;
+    if (n++ < 5) log("audio: GetAudioOutChannelCount -> %u", g_out.channels);
+    c.x[0] = g_out.channels;
 }
 void GetAudioOutSampleFormat(CPU& c) { c.x[0] = 2; }
 void GetAudioOutBufferDataSize(CPU& c) { c.x[0] = ld<uint64_t>(c.x[0] + 16); }
