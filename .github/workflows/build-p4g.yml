@@ -412,60 +412,44 @@ jobs:
 
       - name: Sign P4G APK
         shell: bash
+        env:
+          P4G_SIGNING_KEY_B64: ${{ secrets.P4G_SIGNING_KEY_B64 }}
+          P4G_SIGNING_PASSWORD: ${{ secrets.P4G_SIGNING_PASSWORD }}
         run: |
           set -euo pipefail
 
+          if [ -z "$P4G_SIGNING_KEY_B64" ] || [ -z "$P4G_SIGNING_PASSWORD" ]; then
+            echo "Configure repository secrets P4G_SIGNING_KEY_B64 and P4G_SIGNING_PASSWORD."
+            exit 1
+          fi
+
           BUILD_TOOLS="$ANDROID_HOME/build-tools/35.0.0"
+          umask 077
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+          Path("build-apk/p4g-signing.p12").write_bytes(
+              base64.b64decode(os.environ["P4G_SIGNING_KEY_B64"].strip(), validate=True)
+          )
+          PY
 
-          echo "Aligning APK to 16 KB pages..."
-
-          "$BUILD_TOOLS/zipalign" \
-            -f \
-            -P 16 \
-            4 \
-            build-apk/base.apk \
-            build-apk/aligned.apk
-
-          echo "Verifying APK alignment..."
-
-          "$BUILD_TOOLS/zipalign" \
-            -c \
-            -P 16 \
-            4 \
-            build-apk/aligned.apk
-
-          echo "Generating debug signing key..."
-
-          keytool -genkeypair \
-            -noprompt \
-            -keystore build-apk/debug.keystore \
-            -alias androiddebugkey \
-            -storepass android \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 365 \
-            -dname "CN=Android Debug,O=Development,C=BR"
-
-          echo "Signing P4G APK..."
+          "$BUILD_TOOLS/zipalign" -f -P 16 4 \
+            build-apk/base.apk build-apk/aligned.apk
+          "$BUILD_TOOLS/zipalign" -c -P 16 4 build-apk/aligned.apk
 
           "$BUILD_TOOLS/apksigner" sign \
-            --ks build-apk/debug.keystore \
-            --ks-key-alias androiddebugkey \
-            --ks-pass pass:android \
-            --key-pass pass:android \
+            --ks build-apk/p4g-signing.p12 \
+            --ks-type PKCS12 \
+            --ks-pass env:P4G_SIGNING_PASSWORD \
+            --key-pass env:P4G_SIGNING_PASSWORD \
             --out build-apk/p4g-android-alpha.apk \
             build-apk/aligned.apk
 
-          echo "Verifying APK signature..."
-
-          "$BUILD_TOOLS/apksigner" verify \
-            --verbose \
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs \
             build-apk/p4g-android-alpha.apk
-
           test -s build-apk/p4g-android-alpha.apk
 
-          echo "P4G APK signed successfully."
 
       - name: Upload P4G APK
         uses: actions/upload-artifact@v4
