@@ -17,6 +17,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Test NVN origin transforms
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -std=c++17 -Wall -Wextra -Werror -I runtime/src tests/nvn_origin_test.cpp -o "$RUNNER_TEMP/nvn-origin-test"
+          "$RUNNER_TEMP/nvn-origin-test"
+
       - name: Verify P4G files
         shell: bash
         run: |
