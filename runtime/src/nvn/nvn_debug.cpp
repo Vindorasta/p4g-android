@@ -90,21 +90,7 @@ void write_ppm(const Scratch& s, uint32_t w, uint32_t h, uint64_t frame, uint64_
     if (FILE* f = plat::fopen_utf8(dir + name, "wb")) {
         std::fprintf(f, "P6\n%u %u\n255\n", w, h);
         const uint8_t* px = static_cast<const uint8_t*>(p);
-        // Diagnostic sprite assets: visualize alpha on a checkerboard instead
-        // of discarding it (white RGB glyph textures otherwise look blank).
-        const bool sprite_asset = (texture & 0xFF000000ull) == 0xE9000000ull;
-        for (size_t k = 0; k < size_t(w) * h; k++) {
-            if (sprite_asset) {
-                const unsigned alpha = px[k * 4 + 3];
-                const unsigned background = (((k % w) / 16 + (k / w) / 16) & 1) ? 80 : 32;
-                uint8_t rgb[3];
-                for (int c = 0; c < 3; ++c)
-                    rgb[c] = uint8_t((unsigned(px[k * 4 + c]) * alpha + background * (255 - alpha) + 127) / 255);
-                std::fwrite(rgb, 1, 3, f);
-            } else {
-                std::fwrite(px + k * 4, 1, 3, f);
-            }
-        }
+        for (size_t k = 0; k < size_t(w) * h; k++) std::fwrite(px + k * 4, 1, 3, f);
         std::fclose(f);
     }
     p_vkUnmapMemory(vk_device(), s.buffer_memory);

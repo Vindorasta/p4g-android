@@ -15,6 +15,7 @@
 #include <memory>
 
 #include "nvn_p4g_overlay_aligned.inc"
+#include "nvn_p4g_named_sprites.inc"
 
 #include "nvn_draw_state.h"
 #include "nvn_ultrawide.h"
@@ -551,11 +552,6 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         g_stats.no_vertex++;
         return false;
     }
-    static bool sprite_scene_seen = false;
-    if (!sprite_scene_seen && vs->hash == "937df4e3272e6853") {
-        sprite_scene_seen = true;
-        log("p4g: sprite texture capture v2 armed (96 images per batch; file capture_sprites resets budget)");
-    }
     std::vector<const ShaderInfo*> swapped;  // NX_SWAP_FS / NX_SKIP_FS (nvn_draw_trace.cpp)
     if (!debug_shader_overrides(shaders, fs, swapped)) return false;
     const ProgramLayout& layout = program_layout(*shaders);
@@ -648,71 +644,6 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     }
 
     build_sets(cb, *shaders, layout);
-    // Read source artwork automatically after uploads, without changing its
-    // coordinates. Captures identify assets for a later targeted correction.
-    if (plat::kDiagnostics && sprite_scene_seen && fs &&
-        (vs->hash == "547d293498cbedcf" || vs->hash == "ec20aad1520546db")) {
-        static std::set<std::string> sprite_sources, sprite_content;
-        static uint64_t sprite_pixels = 0;
-        static unsigned sprite_batch_images = 0, sprite_batch = 0;
-        static uint64_t sprite_next_check = 0;
-        if (g_frame.load() >= sprite_next_check) {
-            sprite_next_check = g_frame.load() + 30;
-            const std::string trigger = plat::data_root() + "/capture_sprites";
-            if (FILE* file = plat::fopen_utf8(trigger, "rb")) {
-                std::fclose(file);
-                std::remove(trigger.c_str());
-                sprite_batch_images = 0;
-                sprite_pixels = 0;
-                ++sprite_batch;
-                // Retain already captured resources so menus and fonts do not
-                // consume the next batch again. Files keep unique identifiers.
-                log("p4g: sprite capture batch %u reset at frame=%llu; known sources retained",
-                    sprite_batch, (unsigned long long)g_frame.load());
-            }
-        }
-        if (sprite_batch_images < 96 && sprite_pixels < 16'000'000ull) {
-            for (const auto& resolved : g_textures.resolved) {
-                if (sprite_batch_images >= 96) break;
-                Texture* tx = resolved.texture ? get<Texture>(resolved.texture) : nullptr;
-                GpuImage* img = resolved.texture ? image_of(resolved.texture) : nullptr;
-                if (!tx || !img || !img->uploaded || img->rendered || !img->image ||
-                    !(img->aspect & VK_IMAGE_ASPECT_COLOR_BIT) || img->layout == VK_IMAGE_LAYOUT_UNDEFINED ||
-                    img->width < 16 || img->height < 16 || img->width > 2048 || img->height > 2048)
-                    continue;
-                const uint64_t pixels = uint64_t(img->width) * img->height;
-                if (sprite_pixels + pixels > 16'000'000ull) continue;
-                char identity[160];
-                std::snprintf(identity, sizeof identity, "%llx/%llx/%ux%u/%llx",
-                    (unsigned long long)resolved.texture, (unsigned long long)tx->memory,
-                    img->width, img->height, (unsigned long long)tx->storage_size);
-                if (!sprite_sources.insert(identity).second) continue;
-                std::string fingerprint = identity;
-                if (const MemoryPool* pool = tx->pool ? get<MemoryPool>(tx->pool) : nullptr;
-                    pool && pool->memory && tx->storage_size && tx->offset <= pool->size &&
-                    tx->storage_size <= pool->size - tx->offset && tx->memory == pool->memory + tx->offset)
-                    fingerprint = sha1_hex(reinterpret_cast<const void*>(tx->memory), size_t(tx->storage_size));
-                if (!sprite_content.insert(fingerprint).second) continue;
-                const uint64_t tag = 0xE9000000ull + sprite_content.size();
-                draw_end_rendering(cb, 6);
-                g_snap_layer = g_snap_level = 0;
-                debug_snapshot(cb, *img, tag);
-                sprite_pixels += pixels;
-                ++sprite_batch_images;
-                float projection[4] = {};
-                const Range& uniform = g_state.uniforms[0][0];
-                if (uniform.address && uniform.size >= sizeof projection)
-                    if (const uint8_t* data = guest_bytes(uniform.address))
-                        std::memcpy(projection, data, sizeof projection);
-                log("p4g: sprite asset %llx frame=%llu source=%s %ux%u vs=%s fs=%s fingerprint=%s c3=(%g,%g,%g,%g)",
-                    (unsigned long long)tag, (unsigned long long)g_frame.load(), identity,
-                    img->width, img->height, vs->hash.c_str(), fs->hash.c_str(), fingerprint.c_str(),
-                    projection[0], projection[1], projection[2], projection[3]);
-                if (sprite_batch_images == 96)
-                    log("p4g: sprite texture capture limit reached");
-            }
-        }
-    }
     // Vertex and index data before the pass begins: a range a dispatch of this submit wrote may need a GPU copy
     // (nvn_written.cpp), which cannot be recorded inside a pass.
     DrawInputs in;
@@ -736,6 +667,80 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     PipelineKey key;
     std::memset(&key, 0, sizeof key);  // the key is compared byte for byte
     key.vs = vs, key.fs = fs;
+    static bool named_sprite_announced = false;
+    if (!named_sprite_announced) {
+        named_sprite_announced = true;
+        log("p4g: named sprite orientation v1 ready (3 captured content IDs)");
+    }
+    // Identify the captured artwork by complete source content, never by its
+    // temporary address alone. Other assets using these shaders are untouched.
+    const bool named_sprite_stage = fs &&
+        ((vs->hash == "ec20aad1520546db" && fs->hash == "18ad01dc70644d6f") ||
+         (vs->hash == "547d293498cbedcf" && fs->hash == "7247e449c951a72f"));
+    if (named_sprite_stage && g_textures.resolved.size() == 1) {
+        const uint64_t handle = g_textures.resolved[0].texture;
+        Texture* tx = handle ? get<Texture>(handle) : nullptr;
+        const GpuImage* image = handle ? image_of(handle) : nullptr;
+        const bool dimensions_match = tx &&
+            ((tx->width == 256 && tx->height == 256 && tx->storage_size == 0x40000) ||
+             (tx->width == 512 && tx->height == 256 && tx->storage_size == 0x80000) ||
+             (tx->width == 512 && tx->height == 512 && tx->storage_size == 0x40000));
+        if (dimensions_match && image && !image->rendered && !tx->has_writes.load()) {
+            const MemoryPool* pool = tx->pool ? get<MemoryPool>(tx->pool) : nullptr;
+            if (pool && pool->memory && tx->offset <= pool->size &&
+                tx->storage_size <= pool->size - tx->offset && tx->memory == pool->memory + tx->offset) {
+                static std::map<std::string, std::string> fingerprints;
+                static uint64_t fingerprint_generation = 0;
+                const uint64_t generation = objects_lock().generation.load(std::memory_order_acquire);
+                if (generation != fingerprint_generation || fingerprints.size() >= 256) {
+                    fingerprints.clear();
+                    fingerprint_generation = generation;
+                }
+                char identity[128];
+                std::snprintf(identity, sizeof identity, "%llx/%llx/%llx",
+                    (unsigned long long)handle, (unsigned long long)tx->memory,
+                    (unsigned long long)tx->storage_size);
+                auto found = fingerprints.find(identity);
+                if (found == fingerprints.end())
+                    found = fingerprints.emplace(identity,
+                        sha1_hex(reinterpret_cast<const void*>(tx->memory), size_t(tx->storage_size))).first;
+                const std::string& fingerprint = found->second;
+                const bool alert = vs->hash == "ec20aad1520546db" &&
+                    fingerprint == "c64086dce996de327f2c18e318dba92252a8f9b1";
+                const bool rise = vs->hash == "547d293498cbedcf" && g_state.polygon.cull == 0 &&
+                    (fingerprint == "f5c0ff91d96572dea7bd789ee4d42afedc1943e6" ||
+                     fingerprint == "abbbe38c68dcbe8d5985c04f612e1894aa42c862");
+                if (alert || rise) {
+                    if (alert) {
+                        // Original ec20 orientation only for the alert atlas;
+                        // the corrected ec20 on the phone still draws the aura.
+                        static const std::unique_ptr<ShaderInfo> variant = [vs] {
+                            auto result = std::make_unique<ShaderInfo>(*vs);
+                            result->hash = kP4gAlertHash;
+                            result->spirv.assign(kP4gAlertSpirv,
+                                kP4gAlertSpirv + sizeof(kP4gAlertSpirv) / sizeof(uint32_t));
+                            return result;
+                        }();
+                        key.vs = variant.get();
+                    } else {
+                        static const std::unique_ptr<ShaderInfo> variant = [vs] {
+                            auto result = std::make_unique<ShaderInfo>(*vs);
+                            result->hash = kP4gRiseHash;
+                            result->spirv.assign(kP4gRiseSpirv,
+                                kP4gRiseSpirv + sizeof(kP4gRiseSpirv) / sizeof(uint32_t));
+                            return result;
+                        }();
+                        key.vs = variant.get();
+                    }
+                    static uint64_t named_draws[2] = {};
+                    const uint64_t count = ++named_draws[alert ? 0 : 1];
+                    if (count <= 8 || count % 1000 == 0)
+                        log("p4g: named sprite orientation v1 %s frame=%llu content=%s",
+                            alert ? "alert" : "Rise", (unsigned long long)g_frame.load(), fingerprint.c_str());
+                }
+            }
+        }
+    }
     // P4G experiment: a separate fragment variant for a translucent copy of
     // a rendered scene. Geometry, viewport and the original shaders stay intact.
     static bool overlay_announced = false;
