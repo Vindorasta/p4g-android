@@ -1,486 +1,176 @@
- 
-# Persona 4 Golden for Android (Native Port)
+# P4G — Persona 4 Golden for Android
 
-An experimental native Android port of **Persona 4 Golden (Nintendo Switch version)** for ARM64 smartphones and tablets.
+**0.2.0 Beta** · ARM64 · Vulkan · English app interface
 
-This project uses a custom Nintendo Switch compatibility runtime, native ARM64 execution (NCE), Android system integrations, and Vulkan-based graphics.
+<img src="android/res/drawable-nodpi/p4g_icon_image.png" alt="P4G app icon" width="96" height="96">
 
-Because Nintendo Switch and modern ARM64 Android devices share the AArch64 instruction set, portions of the game's original executable can run directly on the Android device's CPU. The compatibility runtime provides implementations of the Nintendo Switch services and APIs required by the game.
+P4G is an unofficial Android port of the Nintendo Switch version of **Persona 4 Golden**. It uses native ARM64 execution and a compatibility runtime that translates the game's NVN graphics commands to Vulkan.
 
-**No PC is required for game preparation:** the Android application supports selecting a game dump and encryption keys directly on the phone.
+Game preparation runs directly on the phone. Select your own game dump and keys, prepare the game, and launch it from the main menu.
 
-> **DEVELOPMENT STATUS — EXPERIMENTAL ALPHA / PARTIALLY PLAYABLE**
->
-> Persona 4 Golden now successfully reaches the game and renders both 2D interfaces and 3D environments.
->
-> Graphics orientation issues have been corrected, and audio playback is working in the current tested build.
->
-> The project is no longer limited to startup initialization or a black screen.
->
-> However, this is **not a fully tested or optimized release**. Performance, long-term stability, compatibility across devices, and full-game progression remain under investigation.
+[Downloads](https://github.com/nxdevxz/p4g-android/releases) · [Builds](https://github.com/nxdevxz/p4g-android/actions/workflows/build-p4g.yml) · [Report an issue](https://github.com/nxdevxz/p4g-android/issues)
 
-> **IMPORTANT — COPYRIGHTED CONTENT**
->
-> This repository and its APK builds do not include Persona 4 Golden's game executables, assets, encryption keys, firmware, or other copyrighted game content.
->
-> Users must provide their own legally obtained game dump and the necessary keys.
->
-> Game files and encryption keys are not provided or linked here.
+## Current status
 
-Persona 4 Golden is © ATLUS / © SEGA.
+The project is in **Beta**. Gameplay, battles, cutscenes and audio have been tested during development. The reported graphics orientation problems have been corrected, and the 30 FPS limiter has been tested without a noticeable change in game speed.
 
-This is an unofficial fan-made technical project and is not affiliated with, sponsored by, or endorsed by ATLUS, SEGA, or Nintendo.
+A full playthrough and broad device compatibility have **not** been verified. Performance and stability depend on the device, driver and game revision.
 
----
+## Features
 
-## Current Development Status
-
-| Component | Status |
-|---|---|
-| Android launcher | Working |
-| Game dump selection | Working |
-| User-provided encryption keys | Working |
-| Game preparation | Working in tested configuration |
-| Native ARM64 execution (NCE) | Working |
-| Game initialization | Working |
-| Title screen and 2D interface rendering | Working |
-| 3D environment rendering | Working in tested scenes |
-| Graphics orientation | Fixed in current tested configuration |
-| Audio output | Working |
-| NVN/Maxwell shader translation | Working for tested shaders |
-| Vulkan rendering | Working in tested configuration |
-| Touch/controller support | Not fully validated |
-| Saving and loading | Not fully validated |
-| Battles and cutscenes | Not fully validated |
-| Performance optimization | Pending |
-| Long-term stability | Under investigation |
-| Complete game playthrough | Not verified |
-
-**Current milestone:** the game can execute with corrected graphics and working sound on the development test device.
-
-The project should still be considered an experimental Alpha rather than a finished Android release.
-
----
-
-## Installation
-
-### Experimental Android Builds
-
-1. Obtain an experimental APK build from the project's GitHub Actions artifacts, when available.
-2. Install the APK on a compatible ARM64 Android device.
-3. Open the application and grant the required file permissions.
-4. Select your own Persona 4 Golden Nintendo Switch game dump.
-5. Select your own `prod.keys` file.
-6. Run the game's preparation process.
-7. Launch Persona 4 Golden using the application.
-
-The current build may require additional generated shader files and other experimental resources.
-
-### Tested Game Version
-
-| Property | Value |
-|---|---|
-| Game | Persona 4 Golden |
-| Platform | Nintendo Switch |
-| Title ID | `010062B01525C000` |
-| Region | USA |
-| Tested version | Base game, v0 |
-| Build ID | `C433D980688380A642C086072F620928DF7D6320000000000000000000000000` |
-| Execution architecture | ARM64 / AArch64 |
-| Development status | Experimental Alpha |
-
-Other game revisions, updates, and regions have not yet been fully validated.
-
----
+- On-device preparation from an NSP or XCI game dump.
+- Bundled runtime shader pack, including the required `results.tsv` resource mapping.
+- Automatic preparation checks when opening the app.
+- Separate preparation screen and main menu.
+- English app interface, including preparation and exit confirmation.
+- Resolution, fullscreen stretching and FPS settings.
+- On-screen controls with adjustable size, opacity, position and sensitivity.
+- Save import and export, with backups before importing.
+- Translation and CPK mod import.
+- Confirmation when using the phone's Back button or gesture during gameplay.
+- Return to the main menu after confirming that you want to exit the game.
 
 ## Requirements
 
-The following capabilities are relevant to running and testing the project:
+- An **ARM64 Android device** with a Vulkan 1.1-capable GPU.
+- **Android 11 or newer** for the current build configuration, which targets API 30 for DEX generation.
+- Your own Persona 4 Golden Nintendo Switch game dump, in **NSP or XCI** format.
+- Your own **prod.keys** file; some dumps may also require **title.keys**.
+- Enough free storage for the game dump, prepared files, shaders and saves.
 
-- ARM64 Android smartphone or tablet.
-- Android operating system with native AArch64 execution support.
-- Vulkan-capable GPU.
-- Sufficient available RAM for native game execution and graphics resources.
-- Storage for the user's own game dump and generated files.
-- User-provided game encryption keys.
+Minimum RAM and GPU performance requirements have not been established across devices. An ARM64 processor and Vulkan support alone do not guarantee compatibility.
 
-### Development Test Device
+The current runtime targets the base game with Title ID `010062B01525C000` and build ID prefix `C433D980688380A6`. Other game revisions and updates are not guaranteed to work.
 
-| Device | Android | Result |
-|---|---|---|
-| Samsung Galaxy A35 5G (SM-A356E) | Android 16 | Native execution, 2D/3D rendering, corrected graphics orientation, and audio playback working |
+## Installation and first launch
 
-Minimum RAM requirements and broad hardware compatibility have **not yet been established**.
+1. Download **P4G.apk** from a published release or a completed GitHub Actions build.
+2. Install the APK and open **P4G**.
+3. Grant the requested file access permission.
+4. Select the base game's **NSP/XCI** file and your **prod.keys** file.
+5. Tap **Prepare** and wait for preparation to finish.
+6. A **Preparation complete** message appears, and the app returns to the main menu automatically.
+7. Adjust your settings and tap **Play**.
 
-Performance and stability may vary significantly between devices.
+Keep the selected game file available in its original location. The runtime reads it when starting the game.
 
----
+If preparation data or required shaders are missing or invalid, the app returns to the preparation screen. The bundled runtime shaders are installed automatically; manually copying the `spirv` folder should not be necessary for a normal installation.
 
-## Technical Overview
+### Updating
 
-### Native Execution (NCE)
+Install the new APK over the existing installation using a build signed with the **same signing key**. The package name remains `io.github.p4grecomp`.
 
-The application loads the game's original ARM64 executable modules from the user's Nintendo Switch game dump.
+Back up your saves before updating. If Android rejects the update, check that both APKs use the same signing key before uninstalling anything.
 
-The runtime maps the modules into memory, applies relocations, resolves imported symbols, and executes compatible AArch64 instructions natively.
+## Main menu
 
-Nintendo Switch-specific operations require compatibility handling, including:
+| Setting | Purpose |
+|---|---|
+| Output resolution | Select 360p, 480p, 720p or 1080p. |
+| Fullscreen (stretch) | Fill the screen when enabled; preserve the game image's aspect ratio when disabled. |
+| FPS limit | Choose 30 FPS or the option labeled 60 FPS. |
+| FPS counter | Show or hide the frame-rate counter. |
+| On-screen controls | Show or hide the touch controls. |
+| Button size | Adjust touch button size. |
+| Button opacity | Adjust touch button opacity. |
+| Touch stick sensitivity | Adjust the virtual movement stick. |
+| Touch camera sensitivity | Adjust touch camera sensitivity. |
+| Controls position | Open the touch control layout editor. |
+| Saves | Import or export save backups. |
+| Translation / CPK mod | Import a translation or replacement CPK package. |
+| Play | Start the game. |
 
-- Supervisor calls (`SVC`).
-- Thread-local storage and thread-pointer behavior.
-- System timers and counters.
-- Kernel services.
-- Inter-process communication (`IPC`).
-- Application lifecycle management.
-- File system access.
-- Display and graphics interfaces.
+**30 FPS** applies a host-side frame-rate cap. **60 FPS** is the label for the existing game-default option: it does not guarantee a constant 60 FPS or override every frame-rate choice made by the game.
 
-Native execution implementation:
+The English app interface does not force the game itself into English. Game text and translation mods are separate.
 
-`runtime/src/nce/`
+## Saves
 
-### Nintendo Switch Compatibility Runtime
+The default save directory is:
 
-The project builds upon a compatibility runtime originally developed for other native Nintendo Switch game ports.
+```text
+Internal storage/Persona 4 Golden/user/save/
+```
 
-The runtime implements or adapts components such as:
+Import a **ZIP** or a **folder** containing the actual P4G save files, for example:
 
-- Memory management.
-- Kernel services.
-- File system and save-data access.
-- Application services.
-- System time.
-- Input handling.
-- Display and presentation.
-- NVN graphics compatibility.
-- Audio output.
-- Native execution and crash diagnostics.
+```text
+data0001.bin
+data0001.binslot
+data0002.bin
+data0002.binslot
+system.bin
+system.binslot
+```
 
-Relevant implementation paths include:
+- Include both the `.bin` and `.binslot` files for each slot you import.
+- Include the system files if they are present in your backup.
+- Nested backup folders are supported. If a package contains several separate save folders, select only the backup you want to use.
+- Existing saves are backed up to `user/save_backup_...` before import. Slots not included in the import are preserved.
+- Export creates a `P4G-saves-...zip` file in **Downloads**, which can be imported again.
 
-- `runtime/src/main.cpp`
-- `runtime/src/loader.cpp`
-- `runtime/src/memory.cpp`
-- `runtime/src/ipc.cpp`
-- `runtime/src/hle_fs.cpp`
-- `runtime/src/hle_vi.cpp`
-- `runtime/src/hle_audio.cpp`
-- `runtime/src/nvn/`
-- `runtime/src/nce/`
+The importer copies save files; it does **not** convert save formats. Use a backup compatible with this version of P4G. Importing a save does not automatically load it: select **Load Game** inside the game.
 
-### Game Image Support
+## Translation and CPK mods
 
-The runtime reads the user's game image, loads executable modules, and provides access to game resources.
+Use **Translation / CPK mod → Import CPK** to install a package. The current importer writes it to:
 
-Relevant files:
+```text
+Persona 4 Golden/mods/translation/romfs/CPK/PATCH1.CPK
+```
 
-- `runtime/src/game_image.cpp`
-- `runtime/src/game_image.h`
+Importing another CPK replaces that file. Use a package intended for the supported game revision.
 
----
+## Exiting a game
 
-## Graphics and Shader Support
+Press the phone's **Back** button or use the Back gesture during gameplay. Choose **Keep playing** to dismiss the dialog, or **Exit** to end the session and return to the main menu.
 
-### Vulkan Rendering
+Exiting does not automatically save your progress. Save inside the game first.
 
-Persona 4 Golden uses the Nintendo Switch NVN graphics API.
+## Troubleshooting
 
-The runtime translates the required rendering operations to Vulkan on Android.
+| Problem | What to check |
+|---|---|
+| Preparation screen appears again | Confirm that the game file is still readable and that preparation files and required shaders have not been removed. |
+| Preparation fails | Check the selected game revision, keys, file access and available storage. |
+| Imported save does not appear | Import the matching `.bin` and `.binslot` pair, then open Load Game. |
+| APK will not update | Verify the signing key and installed package. |
+| Frame rate is low | Try a lower resolution. A frame-rate limit cannot increase performance below that limit. |
+| Old app icon remains | Refresh or restart the launcher; some launchers cache icons after an update. |
 
-The current tested build can render:
+When reporting a bug, include your device model, Android version, GPU, game revision, reproduction steps and screenshots or video when useful. Include the relevant **nx.log** from the game's data directory when available.
 
-- 2D menus and interface elements.
-- Character and dialogue interfaces.
-- 3D environments.
-- Scene geometry and associated materials.
+Do not attach game dumps or encryption keys to public bug reports.
 
-The current graphics implementation remains experimental and may require further compatibility fixes in untested scenes.
+## Building
 
-### Graphics Orientation Fix
+1. Fork or clone this repository.
+2. Configure the repository secrets `P4G_SIGNING_KEY_B64` and `P4G_SIGNING_PASSWORD` required by `.github/workflows/build-p4g.yml`.
+3. Open **Actions → P4G Beta → Run workflow**.
+4. Wait for a successful build.
+5. Download the **P4G-0.2.0-Beta** artifact and extract **P4G.apk**.
 
-Earlier development builds displayed incorrect vertical orientation in rendered output.
+The workflow builds the native runtime and preparation libraries, compiles the Java interface, runs the included checks and packages the APK. A successful build does not replace testing on an Android device.
 
-The current tested configuration uses a presentation-level Y-axis correction for 2D rendering.
-
-An additional targeted correction was applied to the 3D vertex shader:
-
-`937df4e3272e6853.spv`
-
-The shader's final Y position is inverted to correct the affected 3D rendering orientation.
-
-Because this transformation changes triangle winding, a corresponding Vulkan front-face adjustment is applied for that specific vertex shader in:
-
-`runtime/src/nvn/nvn_pipeline.cpp`
-
-This preserves the expected visible faces of the affected 3D geometry.
-
-The presentation correction is implemented in:
-
-`runtime/src/nvn/nvn_present.cpp`
-
-The tested configuration enables the `NX_FLIP_Y` behavior through game-specific initialization.
-
-**These corrections are specific to the current tested shader and runtime configuration.** They should not be assumed to apply unchanged to all games or shader variants.
-
-### Shader Translation
-
-The project includes experimental tools for translating Nintendo Switch Maxwell/NVN shader programs into SPIR-V suitable for Vulkan.
-
-The shader workflow supports:
-
-- Capturing missing shader data.
-- Processing shader code and control data.
-- Translating shader programs to SPIR-V.
-- Validating generated SPIR-V modules.
-- Loading generated shader replacements during gameplay.
-
-A local translation harness is used during development:
-
-`spirv_harness`
-
-Generated SPIR-V modules can be validated with the Khronos SPIR-V validation tools.
-
-### Recent Shader Progress
-
-A collected set of 10 shader programs has been processed and validated.
-
-Two previously missing fragment shaders were additionally converted successfully:
-
-- `10b50679f5212ee5.spv`
-- `69af7662ddc06327.spv`
-
-Both passed SPIR-V validation targeting Vulkan 1.2.
-
-**SPIR-V validation confirms structural validity, not complete visual correctness or game compatibility.** In-game testing remains necessary.
-
-An earlier experimental GXP-based shader preparation component also exists in the project. GXP and Nintendo Switch NVN/Maxwell shaders are different formats and must not be treated as interchangeable.
-
-Related source paths:
-
-- `games/p4g/import/`
-- `games/p4g/import/p4g_shaders.cpp`
-- `runtime/src/nvn/`
-
-### Shader Directory
-
-The runtime uses generated shader replacements from the game's Android data directory, including:
-
-`/storage/emulated/0/Persona 4 Golden/spirv/`
-
-Some shaders may require game-specific corrections beyond automatic translation.
-
----
-
-## Audio Support
-
-**Audio playback is working in the current tested build.**
-
-The compatibility runtime provides Nintendo Switch audio interfaces and connects audio output to the Android host system.
-
-The implementation includes support for:
-
-- Audio output initialization.
-- Audio output parameters.
-- Audio buffer handling.
-- Playback state and synchronization.
-- Channel-count reporting.
-- Multichannel-to-stereo conversion where required.
-- Diagnostic audio logging.
-
-Primary implementation:
-
-`runtime/src/hle_audio.cpp`
-
-Audio functionality has been confirmed during testing, although compatibility across all scenes, devices, output configurations, and audio backends has not yet been exhaustively validated.
-
----
-
-## Development Progress
-
-### Confirmed Milestones
-
-- Android application and game selection interface implemented.
-- Game dump recognition and preparation functional in the tested setup.
-- Native modules `main`, `sdk`, and `subsdk0` successfully loaded.
-- Native AArch64 execution initialized.
-- Game entry point and runtime initialization reached.
-- Game progresses beyond its original startup failures.
-- 2D graphics rendered successfully.
-- 3D environments rendered successfully.
-- Vertical graphics orientation corrected.
-- Affected 3D triangle winding corrected.
-- Additional missing shaders converted and validated.
-- Audio playback confirmed working.
-
-### Remaining Work
-
-Current development priorities include:
-
-1. Improving frame-rate stability and rendering performance.
-2. Reducing memory usage and shader compilation overhead.
-3. Verifying additional scenes, effects, and shader variants.
-4. Investigating device-specific graphics issues.
-5. Testing long gameplay sessions for crashes and resource leaks.
-6. Verifying battles, cutscenes, saving, and loading.
-7. Expanding compatibility with other ARM64 Android devices.
-8. Improving input and controller behavior where necessary.
-9. Validating full-game progression.
-
-The project has advanced beyond initial startup research, but complete compatibility is not yet established.
-
----
-
-## Project Structure
+## Project structure
 
 | Path | Purpose |
 |---|---|
-| `.github/workflows/` | Android and shader build workflows |
-| `games/p4g/` | Persona 4 Golden-specific implementation |
-| `games/p4g/import/` | Game preparation and shader processing |
-| `games/p4g/java/` | Android launcher |
-| `runtime/src/` | Nintendo Switch compatibility runtime |
-| `runtime/src/nce/` | Native ARM64 execution |
-| `runtime/src/nvn/` | NVN-to-Vulkan graphics implementation |
-| `runtime/src/hle_audio.cpp` | Audio compatibility and output |
+| `games/p4g/java/` | Launcher, preparation, controls editor and save management. |
+| `games/p4g/import/` | Game preparation and shader-processing components. |
+| `games/p4g/assets/spirv/` | Bundled runtime shaders and resource mapping. |
+| `runtime/src/nce/` | Native ARM64 execution. |
+| `runtime/src/nvn/` | NVN-to-Vulkan graphics runtime. |
+| `runtime/src/hle_audio.cpp` | Audio compatibility. |
+| `android/res/` | Android resources and launcher icon. |
+| `tests/` | Regression checks. |
 
-Additional files and components may change as development progresses.
+## Credits and license
 
----
+This project builds on the compatibility runtime and native port work of its original contributors. Preserve the existing copyright notices and attribution when redistributing source code.
 
-## Building the Android APK
+The repository's source-code license is available in [LICENSE](LICENSE). Third-party components retain their respective licenses. Game content, character artwork and trademarks are not covered by the source-code license.
 
-The project uses GitHub Actions for experimental Android builds.
+Persona 4 Golden and the Rise character artwork belong to their respective rights holders, including ATLUS and SEGA. The launcher icon uses a user-supplied image of Rise.
 
-### Android APK
-
-Build workflow:
-
-[Build P4G Android](../../actions/workflows/build-p4g.yml)
-
-### Native Shader Library
-
-Experimental shader build workflow:
-
-[Build P4G Shader](../../actions/workflows/build-p4g-shader.yml)
-
-The Android build integrates the launcher, native runtime, game-specific compatibility code, and graphics components.
-
-Check the workflow logs and generated artifacts for build results.
-
-A successful APK build does not guarantee full gameplay compatibility.
-
----
-
-## Debugging and Bug Reports
-
-Bug reports and diagnostic logs are welcome.
-
-When reporting a problem, include:
-
-- Device model.
-- Android version.
-- SoC and GPU.
-- Available RAM.
-- Game region and version.
-- Description of the issue.
-- Steps to reproduce.
-- Relevant runtime logs.
-- Screenshots, when useful.
-
-The runtime produces diagnostic output such as `nx.log`, and the Android launcher may provide log-export functionality.
-
-When reporting graphics problems, note whether the issue affects 2D interfaces, 3D geometry, textures, or presentation.
-
-When reporting audio problems, include whether audio initialization succeeds and whether sound buffers are being submitted.
-
-**Do not upload copyrighted game dumps, encryption keys, firmware, or proprietary game assets.**
-
----
-
-## Development Roadmap
-
-The next development phase focuses primarily on performance, stability, and broader game compatibility.
-
-Planned areas of work:
-
-1. Optimize Vulkan rendering and graphics pipeline creation.
-2. Improve shader caching and translation reliability.
-3. Reduce CPU and memory overhead.
-4. Verify gameplay features across more scenes.
-5. Test long-term stability.
-6. Improve device compatibility.
-7. Refine Android input and controller support.
-8. Validate saving and loading.
-9. Continue work toward complete gameplay compatibility.
-
-All goals remain subject to technical feasibility and testing.
-
----
-
-## Em Português
-
-### Persona 4 Golden para Android
-
-Este é um port experimental da versão de Nintendo Switch de **Persona 4 Golden**, desenvolvido para dispositivos Android ARM64.
-
-O projeto utiliza execução nativa (NCE), permitindo executar partes do código ARM64 original diretamente no processador do celular.
-
-Um runtime de compatibilidade implementa os serviços do Nintendo Switch necessários para o funcionamento do jogo.
-
-### Estado Atual
-
-**O projeto avançou para uma versão Alpha com execução do jogo, gráficos e áudio funcionando.**
-
-Na configuração testada:
-
-- O jogo inicia e executa.
-- Os menus e elementos 2D são renderizados.
-- Os cenários e modelos 3D são renderizados.
-- A orientação dos gráficos foi corrigida.
-- As faces invisíveis causadas pela inversão do shader 3D foram corrigidas.
-- O áudio funciona.
-- Novos shaders foram convertidos e validados.
-
-Ainda existem limitações importantes.
-
-O desempenho precisa de otimizações, e a estabilidade durante sessões longas ainda não foi completamente verificada.
-
-Também não há validação suficiente para garantir o funcionamento de todas as batalhas, cenas, funcionalidades de save ou da campanha inteira.
-
-**Portanto, o projeto é parcialmente jogável e permanece experimental.**
-
-### Como Testar
-
-1. Obtenha um APK experimental disponibilizado pelo projeto.
-2. Instale o aplicativo em um dispositivo Android ARM64 compatível.
-3. Selecione sua própria cópia legalmente obtida de Persona 4 Golden para Nintendo Switch.
-4. Selecione suas próprias chaves necessárias.
-5. Execute a preparação do jogo.
-6. Inicie o jogo.
-7. Caso encontre problemas, exporte os logs para diagnóstico.
-
-### Aviso Legal
-
-Nenhum jogo, arquivo protegido por direitos autorais, chave de criptografia ou firmware é distribuído neste repositório.
-
-O projeto é independente e não possui afiliação com ATLUS, SEGA ou Nintendo.
-
----
-
-## Credits and License
-
-This project is based on work from:
-
-- [Super Mario Bros. Wonder Recomp / SwitchGamesRecomp](https://github.com/BelmanteGu/SuperMarioWonderRecomp) — original compatibility runtime.
-- [Vita3K](https://github.com/Vita3K/Vita3K) — technology used by an earlier experimental GXP shader conversion component.
-- Open-source Nintendo Switch native execution, Vulkan, and compatibility research.
-
-The project includes additional modifications specifically developed for Persona 4 Golden on Android.
-
-Original third-party licenses, attribution requirements, and copyright notices must be preserved.
-
-See [LICENSE](LICENSE) and the applicable third-party notices for licensing information.
-
----
-
-**Persona 4 Golden for Android is an experimental, partially playable native port. Graphics and audio are working in the tested build, while optimization, stability, and full-game compatibility remain ongoing development goals.**
+This is an unofficial fan project and is not affiliated with or endorsed by ATLUS, SEGA or Nintendo. Game dumps and encryption keys are not distributed with this project; users must supply their own.
