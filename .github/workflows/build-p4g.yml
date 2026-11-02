@@ -247,7 +247,14 @@ jobs:
 
           echo "P4G Java compilation successful."
 
-      - name: Generate P4G DEX
+      - name: Test P4G preparation and save imports
+        # Host tests run after the real Android Java compilation above.
+        # Keep UI/native lifecycle validation on the device.
+        if: success()
+        shell: bash
+        run: python3 tests/test_app_flow.py
+
+      - name: Generate P4G DEX bytecode
         shell: bash
         run: |
           set -euo pipefail
