@@ -832,7 +832,47 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         vp.x *= 0.75f, vp.y *= 0.75f, vp.width *= 0.75f, vp.height *= 0.75f;
         sc = {{sc.offset.x * 3 / 4, sc.offset.y * 3 / 4}, {sc.extent.width * 3 / 4, sc.extent.height * 3 / 4}};
     }
-    vp.y += vp.height, vp.height = -vp.height;
+    // P4G controlled experiment: only unculled, non-stencilled UI sprites
+    // with a real depth attachment and a source not marked as rendered.
+    // The screen-copy and blur shaders never enter this branch.
+    bool local_sprite = false;
+    const bool sprite_shader = vs->hash == "547d293498cbedcf" && fs && fs->hash == "7247e449c951a72f";
+    const GpuImage* sprite_source = sprite_shader && g_textures.resolved.size() == 1 &&
+        g_textures.resolved[0].texture ? image_of(g_textures.resolved[0].texture) : nullptr;
+    if (sprite_source && !sprite_source->rendered && key.depth_format != VK_FORMAT_UNDEFINED &&
+        key.depth.depth_test && !key.depth.stencil_test && key.polygon.cull == 0)
+        local_sprite = true;
+    static bool sprite_test_announced = false;
+    if (!sprite_test_announced) {
+        sprite_test_announced = true;
+        log("p4g: local sprite orientation test v1");
+    }
+    if (!local_sprite) vp.y += vp.height, vp.height = -vp.height;
+    if (sprite_shader && sprite_source) {
+        static std::set<std::string> sprite_reports;
+        if (sprite_reports.size() < 512) {
+            char tag[160];
+            std::snprintf(tag, sizeof tag, "%llx/%ux%u/%u/%u/%u/%u",
+                (unsigned long long)g_textures.resolved[0].texture, g_pass_extent.width, g_pass_extent.height,
+                unsigned(sprite_source->rendered), unsigned(key.depth_format != VK_FORMAT_UNDEFINED),
+                unsigned(key.depth.stencil_test), unsigned(local_sprite));
+            if (sprite_reports.insert(tag).second) {
+                float c3[8] = {};
+                bool valid = false;
+                // Maxwell c3 is NVN uniform slot 0, not slot 3.
+                const Range& uniform = g_state.uniforms[0][0];
+                if (uniform.address && uniform.size >= 16) {
+                    if (const uint8_t* data = guest_bytes(uniform.address)) {
+                        std::memcpy(c3, data, size_t(std::min<uint64_t>(uniform.size, sizeof c3)));
+                        valid = true;
+                    }
+                }
+                log("p4g: sprite-local frame=%llu source=%s changed=%u c3valid=%u row0=(%g,%g,%g,%g) row1=(%g,%g,%g,%g)",
+                    (unsigned long long)g_frame.load(), tag, unsigned(local_sprite), unsigned(valid),
+                    c3[0], c3[1], c3[2], c3[3], c3[4], c3[5], c3[6], c3[7]);
+            }
+        }
+    }
     {   // Compact effect diagnostics: one record per shader/state combination per 5 s.
         // This inventories usage; it does not identify an effect by its hash alone.
         static std::map<std::string, uint64_t> reports;
@@ -848,48 +888,6 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                 reports[tag] = now;
                 log("p4g: effects-use t=%.3f frame=%llu %s", double(now) / 1e9,
                     (unsigned long long)g_frame.load(), tag.c_str());
-            }
-        }
-    }
-    {   // Inventory sampled sources without changing coordinates or rendering.
-        static std::set<std::string> sources;
-        static bool announced = false;
-        if (!announced) {
-            announced = true;
-            log("p4g: texture diagnostic sources-v2 (at most 1024 records)");
-        }
-        const bool watched = vs->hash == "2fe82df0569b75ff" || vs->hash == "8e2b4a6cdf80ae80" ||
-                             vs->hash == "547d293498cbedcf";
-        if (watched && sources.size() < 1024) {
-            for (size_t slot = 0; slot < g_textures.handles.size() &&
-                                  slot < g_textures.bindings.size() && sources.size() < 1024; ++slot) {
-                uint64_t texture = 0;
-                SamplerInfo sampler;
-                texture_for(g_textures.handles[slot], texture, sampler);
-                const Texture* tx = texture ? get<Texture>(texture) : nullptr;
-                if (!tx) continue;
-                const bool rendered = tx->image && tx->image->rendered;
-                char detail[160];
-                std::snprintf(detail, sizeof detail, " slot=%zu tex=%llx %ux%u format=%x rendered=%u depth=%u",
-                    slot, (unsigned long long)texture, tx->width, tx->height, tx->format,
-                    unsigned(rendered), unsigned(key.depth.depth_test));
-                const std::string signature = vs->hash + "/" + (fs ? fs->hash : "-") + detail;
-                if (!sources.insert(signature).second) continue;
-                float matrix[16] = {};
-                bool have_matrix = false;
-                const Range& uniform = g_state.uniforms[0][3];
-                if (uniform.address && uniform.size >= sizeof matrix) {
-                    if (const uint8_t* data = guest_bytes(uniform.address)) {
-                        std::memcpy(matrix, data, sizeof matrix);
-                        have_matrix = true;
-                    }
-                }
-                log("p4g: texture-use frame=%llu vs=%s fs=%s%s target=%ux%u c3=%u diag=(%g,%g,%g,%g)",
-                    (unsigned long long)g_frame.load(), vs->hash.c_str(), fs ? fs->hash.c_str() : "-", detail,
-                    g_pass_extent.width, g_pass_extent.height, unsigned(have_matrix),
-                    matrix[0], matrix[5], matrix[10], matrix[15]);
-                if (sources.size() == 1024)
-                    log("p4g: texture diagnostic limit reached; no more texture-use records");
             }
         }
     }
