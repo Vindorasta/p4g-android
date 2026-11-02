@@ -41,11 +41,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/** Home screen for P4G. Options retain their existing config keys.
- * Output size, texture detail, frame pacing, input and file-management controls
- * are exposed here. Renderer options that do not match the observed P4G paths
- * are omitted. Unknown config entries are preserved by load/save.
- */
+/** Routes to preparation or the main menu after checking the actual files. */
 public class Launcher extends Activity {
     static final String DATA = "Persona 4 Golden";
 
@@ -108,32 +104,13 @@ public class Launcher extends Activity {
         }
     }
 
-    // A preparacao e vinculada ao URI selecionado e ao relatorio real do importador.
-    // Nunca aceitar simplesmente um arquivo antigo de outro jogo.
     boolean prepared() {
         String uri = gameUri();
-        if (uri == null || uri.isEmpty()) return false;
-        if (!uri.equals(prefs().getString("p4g_prepared_uri", ""))) return false;
-
-        File summary = new File(getCacheDir(), "import/spirv/summary.tsv");
-        if (!summary.isFile()) return false;
-
-        int total = -1, success = -1, failed = -1;
-        try (BufferedReader reader = new BufferedReader(new FileReader(summary))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                String[] fields = line.trim().split("\t", -1);
-                if (fields.length != 2) continue;
-                int value = Integer.parseInt(fields[1]);
-                if ("total".equals(fields[0])) total = value;
-                else if ("sucesso".equals(fields[0])) success = value;
-                else if ("falhas".equals(fields[0])) failed = value;
-            }
-        } catch (Exception e) {
-            Log.w("P4G-Launch", "Nao foi possivel ler summary.tsv", e);
-            return false;
-        }
-        return total > 0 && success == total && failed == 0;
+        if (uri == null || !uri.equals(prefs().getString("p4g_prepared_uri", ""))) return false;
+        try {
+            return PreparationFiles.ready(new File(getCacheDir(), "import/spirv"),
+                    new File(dataDir(), "spirv"), getAssets().open("spirv/manifest.tsv"));
+        } catch (Exception e) { Log.w("P4G-Launch", "Preparação precisa ser refeita", e); return false; }
     }
 
     String displayName(Uri uri) {
@@ -209,65 +186,11 @@ public class Launcher extends Activity {
         startActivityForResult(i, PREPARE);
     }
 
-    // The runtime reads the game from this descriptor (same process: the NativeActivity runs in the launcher's).
-    boolean openGameForRuntime() {
-        try {
-            ParcelFileDescriptor f = getContentResolver().openFileDescriptor(Uri.parse(gameUri()), "r");
-            if (f == null) return false;        
-            Os.setenv("NX_TRACE_FS", "1", true);
-            Os.setenv("NX_GAME_FD", String.valueOf(f.detachFd()), true);
-            Os.setenv("NX_GAME_NAME", gameName(), true);
-            Os.setenv("NX_KEYS", keysFile(this, "prod.keys").getPath(), true);
-            File tk = keysFile(this, "title.keys");
-            if (tk.exists()) Os.setenv("NX_TITLE_KEYS", tk.getPath(), true);
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    // The recompiled build reads analysis/main.bin, the native one (the game's own code) exefs/main.
-    boolean hasData() {
-        return new File(dataDir(), "exefs/main").canRead() || new File(dataDir(), "analysis/main.bin").canRead();
-    }
-
-    // Build IDs conhecidos para exefs/main quando a inicializacao usar dados locais:
-    // (NSO header +0x40). The native build refuses another (runtime main.cpp); say so here instead of closing.
-    static final String[] BUILD_IDS = {
-            "708BCACA873EA32B", "B78A03E489E5BD92",
-            "6E1F4CAE92A28C91", "2F2253ACD6BE5D87"
-    };
-
-    // Null when exefs/main is missing or the right version, else its build ID.
-    String wrongBuild() {
-        File main = new File(dataDir(), "exefs/main");
-        if (!main.canRead()) return null;
-        byte[] id = new byte[8];
-        try (java.io.RandomAccessFile f = new java.io.RandomAccessFile(main, "r")) {
-            f.seek(0x40);
-            f.readFully(id);
-        } catch (java.io.IOException e) {
-            return "?";
-        }
-        StringBuilder hex = new StringBuilder();
-        for (byte b : id) hex.append(String.format("%02X", b & 0xFF));
-        String found = hex.toString();
-        for (String known : BUILD_IDS) if (known.equals(found)) return null;
-        return found;
-    }
-
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         P4gTheme.apply(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        // The game's texts and subtitles (runtime language.h): its own language names, as a console lists them.
-        options.add(new Option("language", "Idioma de textos y subtítulos", "Text and subtitle language",
-                new String[] {"auto", "en-US", "es", "fr", "de", "it", "ja", "ko", "zh-Hans", "zh-Hant"},
-                new String[] {"Automático (idioma del dispositivo)", "English", "Español", "Français", "Deutsch",
-                        "Italiano", "日本語", "한국어", "简体中文", "繁體中文"},
-                new String[] {"Automatic (device language)", "English", "Español", "Français", "Deutsch", "Italiano",
-                        "日本語", "한국어", "简体中文", "繁體中文"}, 0));
         options.add(new Option("RESOLUTION", "Resolución de salida", "Output resolution",
                 new String[] {"360p", "480p", "720p", "1080p"},
                 new String[] {"360p", "480p", "720p", "1080p"},
@@ -276,8 +199,6 @@ public class Launcher extends Activity {
                 new String[] {"0", "1"},
                 new String[] {"Desactivada", "Activada"},
                 new String[] {"Off", "On"}, 0));
-        options.add(new Option("GRAPHICS", "Detalle de texturas", "Texture detail", new String[] {"low", "medium", "high"},
-                new String[] {"Bajos", "Medios", "Altos"}, new String[] {"Low", "Medium", "High"}, 0));
         options.add(new Option("NX_FPS_CAP", "Límite de FPS", "FPS limit", new String[] {"30", "60"},
                 new String[] {"30 fps", "Predeterminado del juego"}, new String[] {"30 fps", "Game default"}, 0));
         options.add(new Option("NX_SHOW_FPS", "Contador de FPS", "FPS counter", new String[] {"0", "1"},
@@ -290,10 +211,6 @@ public class Launcher extends Activity {
         options.add(new Option("NX_TOUCH_OPACITY", "Opacidad de los botones", "Button opacity",
                 new String[] {"50", "85", "100"}, new String[] {"Baja", "Normal", "Alta"},
                 new String[] {"Low", "Normal", "High"}, 1));
-        options.add(new Option("NX_GAMEPAD_LAYOUT", "Botones del mando físico", "Physical gamepad buttons",
-                new String[] {"0", "1"},
-                new String[] {"Nintendo (A dcha, B abajo)", "Xbox / PC (A abajo, B dcha)"},
-                new String[] {"Nintendo (A right, B down)", "Xbox / PC (A down, B right)"}, 0));
         options.add(new Option("NX_STICK_SENSITIVITY", "Sensibilidad palanca táctil", "Touch stick sensitivity",
                 new String[] {"50", "75", "100", "125", "150", "200"},
                 new String[] {"50%", "75%", "100%", "125%", "150%", "200%"},
@@ -302,16 +219,33 @@ public class Launcher extends Activity {
                 new String[] {"50", "75", "100", "125", "150", "200", "250"},
                 new String[] {"50%", "75%", "100%", "125%", "150%", "200%", "250%"},
                 new String[] {"50%", "75%", "100%", "125%", "150%", "200%", "250%"}, 2));
-        build();
+        build(false);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         refresh();
+        showGameError(getIntent());
     }
 
-    void build() {
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+    }
+
+    void showGameError(Intent intent) {
+        String error = intent.getStringExtra("game_error");
+        if (error != null) {
+            intent.removeExtra("game_error");
+            tell("Não foi possível abrir o jogo", error);
+        }
+    }
+
+    boolean readyForPlay;
+    int refreshGeneration;
+
+    void build(boolean ready) {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(P4gTheme.BACKGROUND);
@@ -340,6 +274,7 @@ public class Launcher extends Activity {
         status.setPadding(0, dp(6), 0, dp(14));
         root.addView(status);
 
+        if (!ready) {
         P4gTheme.section(root, t("Preparación", "Game setup"));
         addRow(root, t("Archivo del juego (.nsp / .xci)", "Game file (.nsp / .xci)"), t("Elegir", "Choose"),
                 new View.OnClickListener() {
@@ -356,8 +291,25 @@ public class Launcher extends Activity {
         });
 
 
+        play = new Button(this);
+        P4gTheme.button(play, true);
+        play.setAllCaps(false);
+        play.setText("Preparar");
+        play.setTextSize(20);
+        root.addView(play, new LinearLayout.LayoutParams(-1, dp(64)));
+        play.setOnClickListener(v -> {
+            if (!hasAccess()) askAccess();
+            else if (gameUri() == null || !gameReadable()) pick(PICK_GAME, "*/*", false);
+            else if (!hasKeys()) pick(PICK_KEYS, "*/*", true);
+            else { prefs().edit().remove("p4g_prepared_uri").apply(); prepare(); }
+        });
+        ScrollView setup = new ScrollView(this);
+        setup.addView(root);
+        setContentView(setup);
+        return;
+        }
+
         for (final Option o : options) {
-            if ("language".equals(o.key)) P4gTheme.section(root, t("Preferencias", "Game preferences"));
             if ("RESOLUTION".equals(o.key)) P4gTheme.section(root, t("Imagen y rendimiento", "Display and performance"));
             if ("NX_TOUCH_SHOW".equals(o.key)) P4gTheme.section(root, t("Controles", "Controls"));
             LinearLayout row = new LinearLayout(this);
@@ -414,7 +366,7 @@ public class Launcher extends Activity {
         });
         root.addView(edit);
 
-        P4gTheme.section(root, t("Archivos y soporte", "Files and support"));
+        P4gTheme.section(root, "Jogos salvos e tradução");
         // Saves: in from a ZIP or a folder (a Switch backup or another player's), out to a ZIP in Download.
         LinearLayout saves = new LinearLayout(this);
         saves.setOrientation(LinearLayout.HORIZONTAL);
@@ -487,30 +439,6 @@ public class Launcher extends Activity {
         });
         root.addView(transRow);
 
-        // Debug logs export
-        LinearLayout logsRow = new LinearLayout(this);
-        logsRow.setOrientation(LinearLayout.HORIZONTAL);
-        logsRow.setGravity(Gravity.CENTER_VERTICAL);
-        logsRow.setPadding(0, dp(4), 0, dp(4));
-        TextView logsName = new TextView(this);
-        logsName.setText(t("Registros de depuración", "Debug logs"));
-        logsName.setTextColor(Color.WHITE);
-        logsName.setTextSize(17);
-        logsRow.addView(logsName, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        Button logsButton = new Button(this);
-        P4gTheme.button(logsButton, false);
-        logsButton.setAllCaps(false);
-        logsButton.setMinWidth(dp(180));
-        logsButton.setText(t("Exportar registros", "Export logs"));
-        logsRow.addView(logsButton);
-        logsButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                exportLogs();
-            }
-        });
-        root.addView(logsRow);
-
         play = new Button(this);
         play.setTextSize(20);
         play.setAllCaps(false);
@@ -560,91 +488,50 @@ public class Launcher extends Activity {
     }
 
     void launchAfterShaderInstall() {
-
-        if (!hasAccess()) {
-            askAccess();
-            return;
-        }
-        if (gameUri() != null) {  // the game file the player picked
-            if (!gameReadable()) pick(PICK_GAME, "*/*", false);
-            else if (!hasKeys()) pick(PICK_KEYS, "*/*", true);
-            else if (!prepared()) prepare();
-            else if (openGameForRuntime()) {
-                save();
-                Log.i("P4G-Launch", "Iniciando NativeActivity do P4G");
-                try {
-                    startActivity(new Intent(Launcher.this, android.app.NativeActivity.class));
-                } catch (Exception e) {
-                    Log.e("P4G-Launch", "Falha ao iniciar NativeActivity", e);
-                    tell("Falha ao iniciar P4G", String.valueOf(e.getMessage()));
-                }
-            } else {
-                tell(t("No se pudo abrir el juego", "The game could not be opened"), gameName());
-            }
-            return;
-        }
-        if (!hasData()) {
-            pick(PICK_GAME, "*/*", false);
-            return;
-        }
-        if (wrongBuild() != null) {
-            refresh();
-            return;
-        }
+        if (!readyForPlay || !gameReadable() || !hasKeys()) { refresh(); return; }
         save();
-        startActivity(new Intent(Launcher.this, android.app.NativeActivity.class));
+        Intent i = new Intent(this, GameActivity.class);
+        i.setData(Uri.parse(gameUri()));
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        i.putExtra(ImportActivity.EXTRA_NAME, gameName());
+        startActivity(i);
     }
 
     void refresh() {
-        load();
-        for (Option o : options) {
-            String v = config.get(o.key);
-            if ("RESOLUTION".equals(o.key) && v == null) {
-                String hh = config.get("NX_HANDHELD");
-                if ("0".equals(hh)) v = "1080p";
-                else {
-                    String r = config.get("resolution");
-                    if (r != null && r.contains("360")) v = "360p";
-                    else if (r != null && r.contains("480")) v = "480p";
-                    else v = "720p";
+        if (installingShaders || importingSaves || isFinishing() || isDestroyed()) return;
+        final int generation = ++refreshGeneration;
+        play.setEnabled(false);
+        status.setText("Verificando preparação...");
+        new Thread(() -> {
+            final boolean access = hasAccess();
+            final boolean readable = access && gameUri() != null && gameReadable();
+            final boolean keys = hasKeys();
+            final boolean ready = readable && keys && prepared();
+            runOnUiThread(() -> {
+                if (generation != refreshGeneration || isFinishing() || isDestroyed()) return;
+                readyForPlay = ready;
+                load();
+                for (Option o : options) {
+                    String value = config.get(o.key);
+                    for (int k = 0; k < o.values.length; ++k)
+                        if (o.values[k].equals(value)) o.pick = k;
                 }
-            }
-            for (int k = 0; v != null && k < o.values.length; k++)
-                if (o.values[k].equals(v)) o.pick = k;
-        }
-        updateButtons(getWindow().getDecorView());
-        if (!hasAccess()) {
-            status.setText(t("Hace falta el permiso de acceso a todos los archivos para leer los datos del juego.",
-                    "All-files access is needed to read the game data."));
-            play.setText(t("Dar permiso", "Grant access"));
-        } else if (gameUri() != null && !gameReadable()) {
-            status.setText(Lang.f("Ya no se puede leer el archivo del juego (%s): vuelve a elegirlo.",
-                    "The game file can no longer be read (%s): choose it again.", gameName()));
-            play.setText(t("Elegir el juego", "Choose the game"));
-        } else if (gameUri() != null && !hasKeys()) {
-            status.setText(t("Falta tu archivo prod.keys.", "Your prod.keys file is missing."));
-            play.setText(t("Elegir prod.keys", "Choose prod.keys"));
-        } else if (gameUri() != null && !prepared()) {
-            status.setText(Lang.f("Juego: %s. Falta prepararlo: solo una vez, unos minutos.",
-                    "Game: %s. It needs preparing: once, a few minutes.", gameName()));
-            play.setText(t("Preparar el juego", "Prepare the game"));
-        } else if (gameUri() != null) {
-            status.setText(Lang.f("Shaders preparados: %s (runtime experimental)", "Shaders prepared: %s (experimental runtime)", gameName()));
-            play.setText(t("Jugar", "Play"));
-        } else if (!hasData()) {
-            status.setText(t("Elige el archivo de tu juego (.nsp o .xci de Persona 4 Golden 1.0.0) y tu prod.keys.",
-                    "Choose your game file (a Persona 4 Golden 1.0.0 .nsp or .xci) and your prod.keys."));
-            play.setText(t("Elegir el juego", "Choose the game"));
-        } else if (wrongBuild() != null) {
-            status.setText(Lang.f("Almacenamiento interno/%s/exefs/main no es Persona 4 Golden 1.0.0 (build %s). Copia el "
-                            + "exefs del juego base, sin la actualización.",
-                    "Internal storage/%s/exefs/main is not Persona 4 Golden 1.0.0 (build %s). Copy the exefs of the base "
-                            + "game, without the update.", DATA, wrongBuild()));
-            play.setText(t("Volver a buscar", "Look again"));
-        } else {
-            status.setText(Lang.f("Datos listos: %s", "Data ready: %s", dataDir().getPath()));
-            play.setText(t("Jugar", "Play"));
-        }
+                build(ready);
+                updateButtons(getWindow().getDecorView());
+                play.setEnabled(true);
+                if (ready) {
+                    status.setText(gameName());
+                    play.setText(t("Jugar", "Play"));
+                } else {
+                    String game = gameUri() == null ? "Nenhum jogo selecionado" : gameName();
+                    status.setText(game + "\nprod.keys: " + (keys ? "selecionado" : "não selecionado") +
+                        (!access ? "\nPermita o acesso aos arquivos para preparar o jogo." :
+                         !readable && gameUri() != null ? "\nSelecione novamente o arquivo do jogo." :
+                         readable && keys ? "\nPrepare o jogo para continuar." : ""));
+                    play.setText(!access ? "Permitir acesso" : "Preparar");
+                }
+            });
+        }, "P4G-setup-check").start();
     }
 
     void updateButtons(View v) {
@@ -716,25 +603,35 @@ public class Launcher extends Activity {
             importCpk(data.getData());
             return;
         }
-        try {
-            SaveFiles.Result r = request == PICK_ZIP ? SaveFiles.importZip(getContentResolver(), data.getData())
-                    : request == PICK_FOLDER ? SaveFiles.importTree(getContentResolver(), data.getData()) : null;
-            if (r == null) {
-                tell(t("No hay partidas", "No saves found"),
-                        t("Ahí no encontré partidas de Persona 4 Golden: busca las carpetas DATA01, DATA02... o SYSTEM.",
-                                "No Persona 4 Golden saves there: look for the DATA01, DATA02... or SYSTEM folders."));
-                return;
-            }
-            String slots = r.slots.isEmpty() ? t("solo ajustes del sistema", "system settings only")
-                    : Lang.f("ranuras %s", "slots %s", android.text.TextUtils.join(", ", r.slots));
-            String kept = r.backup == null ? "" : Lang.f("\n\nTus partidas anteriores quedaron en user/%s.",
-                    "\n\nYour previous saves are in user/%s.", r.backup);
-            tell(t("Partidas importadas", "Saves imported"),
-                    Lang.f("%d archivos (%s). Ábrelas desde Cargar partida.", "%d files (%s). Open them from Load Game.",
-                            r.files, slots) + kept);
-        } catch (Exception e) {
-            tell(t("No se pudo importar", "Import failed"), String.valueOf(e.getMessage()));
-        }
+        if (request == PICK_ZIP || request == PICK_FOLDER) importSaves(request, data.getData());
+    }
+
+    boolean importingSaves;
+    void importSaves(int request, Uri uri) {
+        if (importingSaves) return;
+        importingSaves = true;
+        play.setEnabled(false);
+        status.setText("Importando jogos salvos...");
+        new Thread(() -> {
+            SaveFiles.Result imported = null;
+            String failure = null;
+            try {
+                imported = request == PICK_ZIP ? SaveFiles.importZip(getContentResolver(), uri)
+                    : SaveFiles.importTree(getContentResolver(), uri);
+            } catch (Exception e) { failure = String.valueOf(e.getMessage()); }
+            final SaveFiles.Result result = imported;
+            final String error = failure;
+            runOnUiThread(() -> {
+                importingSaves = false;
+                if (isFinishing() || isDestroyed()) return;
+                refresh();
+                if (error != null) tell("Não foi possível importar", error);
+                else if (result == null) tell("Nenhum save encontrado",
+                    "Escolha a pasta ou ZIP com os arquivos data0001.bin e data0001.binslot do P4G. Importe também system.bin e system.binslot se estiverem no backup.");
+                else tell("Jogos salvos importados", result.files + " arquivos importados. Abra Carregar jogo no P4G." +
+                    (result.backup == null ? "" : "\n\nBackup anterior: user/" + result.backup));
+            });
+        }, "P4G-save-import").start();
     }
 
     void exportSaves() {
@@ -818,9 +715,7 @@ public class Launcher extends Activity {
             config.put("NX_RES", "720p");
         }
         for (String k : new String[] {"RENDER_SCALE", "NX_ANISO_MAX", "NX_LOD_BIAS"}) config.remove(k);
-        final String preset = config.get("GRAPHICS");
-        if ("low".equals(preset)) config.put("NX_LOD_BIAS", "1");
-        else if ("medium".equals(preset)) config.put("NX_LOD_BIAS", "0.5");
+        for (String key : new String[] {"language", "GRAPHICS", "NX_GAMEPAD_LAYOUT"}) config.remove(key);
         writeConfig(new File(dataDir(), "config.txt"), config);
     }
 
@@ -843,54 +738,6 @@ public class Launcher extends Activity {
         } catch (Exception e) {
             Toast.makeText(this, t("Error al importar CPK: " + e.getMessage(),
                     "Error importing CPK: " + e.getMessage()), Toast.LENGTH_LONG).show();
-        }
-    }
-
-    void exportLogs() {
-        try {
-            File dl = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-            if (!dl.exists()) dl.mkdirs();
-            File out = new File(dl, "p4g-log.txt");
-            StringBuilder sb = new StringBuilder();
-            sb.append("=== Persona 4 Golden Recomp Log Export ===\n");
-            sb.append("Device: ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append("\n");
-            sb.append("Android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n");
-            sb.append("Date: ").append(new java.util.Date().toString()).append("\n\n");
-
-            try {
-                Process p = Runtime.getRuntime().exec(new String[] {"logcat", "-d", "-s", "p4g:V", "DEBUG:V", "vulkan:V"});
-                try (BufferedReader br = new BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
-                    String line;
-                    while ((line = br.readLine()) != null) sb.append(line).append("\n");
-                }
-            } catch (Exception e) {
-                sb.append("logcat capture error: ").append(e.getMessage()).append("\n");
-            }
-
-            File nxLog = new File(dataDir(), "nx.log");
-            if (nxLog.exists()) {
-                sb.append("\n=== nx.log ===\n");
-                try (BufferedReader br = new BufferedReader(new FileReader(nxLog))) {
-                    String line;
-                    while ((line = br.readLine()) != null) sb.append(line).append("\n");
-                }
-            }
-
-            try (FileWriter fw = new FileWriter(out)) {
-                fw.write(sb.toString());
-            }
-
-            Toast.makeText(this, t("Registros exportados a Download/p4g-log.txt",
-                    "Logs exported to Download/p4g-log.txt"), Toast.LENGTH_SHORT).show();
-
-            Intent share = new Intent(Intent.ACTION_SEND);
-            share.setType("text/plain");
-            share.putExtra(Intent.EXTRA_SUBJECT, "Persona 4 Golden Debug Log");
-            share.putExtra(Intent.EXTRA_TEXT, sb.toString());
-            startActivity(Intent.createChooser(share, t("Compartir registros", "Share logs")));
-        } catch (Exception e) {
-            Toast.makeText(this, t("Error al exportar registros: " + e.getMessage(),
-                    "Error exporting logs: " + e.getMessage()), Toast.LENGTH_LONG).show();
         }
     }
 

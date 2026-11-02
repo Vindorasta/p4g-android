@@ -1,9 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Persona 5 Royal: a NativeActivity (the runtime in libp5r.so, android_main) behind a home screen with the options
-     (games/p5r/java: Launcher.java, which writes config.txt). The game data from the player's own dump (exefs/,
-     extract/romfs/, spirv/: games/p5r/tools/prepare_data.ps1) lives in Internal storage/Persona 5 Royal, which needs
-     all-files access. The native build (NX_NCE, build_android.cmd -Nce) holds no game code: it runs exefs/ as it is.
-     The recompiled build (analysis/ and the game's code compiled in) is private to the owner of the game. -->
+<!-- P4G launcher, preparation process, and isolated native game process. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.p4grecomp"
     android:versionCode="9"
@@ -19,6 +15,7 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application
+        android:enableOnBackInvokedCallback="false"
         android:label="P4G"
         android:icon="@mipmap/p4g_icon"
         android:roundIcon="@mipmap/p4g_icon"
@@ -33,6 +30,7 @@
         <!-- Home screen: data check, options (config.txt), then the game. -->
         <activity
             android:name=".Launcher"
+            android:launchMode="singleTop"
             android:exported="true"
             android:theme="@android:style/Theme.Material.NoActionBar"
             android:screenOrientation="sensorLandscape">
@@ -41,16 +39,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!-- Prepares the game once: checks the player's NSP and keys and translates its shaders (libp5rimport.so with
-             libspirvharness.so, the shader translator). Its own process, so the translator's runtime never shares
+        <!-- Prepares the game once: checks the player's NSP and keys and translates its shaders (libp4gimport.so with
+             libp4gshader.so, the shader translator). Its own process, so the translator's runtime never shares
              the game's. -->
         <activity
             android:name=".ImportActivity"
             android:exported="false"
             android:process=":import"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
             android:theme="@android:style/Theme.Material.NoActionBar"
             android:screenOrientation="sensorLandscape"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
+            />
         <!-- Where the on-screen controls go (NX_TOUCH_LAYOUT), full screen like the game. -->
         <activity
             android:name=".ControlsEditor"
@@ -58,10 +57,12 @@
             android:theme="@style/Fullscreen"
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden" />
-        <!-- The game. Exported: test runs start it directly (games/p5r/tools/run_android.ps1). -->
+        <!-- Isolated game process: native shutdown leaves the launcher alive. -->
         <activity
-            android:name="android.app.NativeActivity"
-            android:exported="true"
+            android:name=".GameActivity"
+            android:process=":game"
+            android:enableOnBackInvokedCallback="true"
+            android:exported="false"
             android:screenOrientation="sensorLandscape"
             android:resizeableActivity="false"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density">

@@ -21,22 +21,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeSet;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
-/**
- * The game's saves, imported and exported from the home screen. They live in Internal storage/Persona 5 Royal/user/save
- * as on the Switch: SYSTEM/SYSTEM.DAT and a DATAnn/ folder per slot. An import takes a ZIP or a folder (as JKSV or
- * Checkpoint export a Switch save, or as another player's export), finds the folder that holds DATAnn/ or SYSTEM/
- * wherever it sits inside, copies the current saves to user/save_backup_<date> first, then writes the imported files
- * over them (slots it does not bring stay). An export writes Download/P5R-saves-<date>.zip, which imports back as is.
- */
+/** Imports the actual P4G files into the runtime's user/save directory. */
 final class SaveFiles {
-    static final Pattern MARK = Pattern.compile("(?:^|/)(DATA\\d\\d|SYSTEM)/");
-    static final Pattern SLOT = Pattern.compile("(?:^|/)DATA(\\d\\d)/");
     static final long MAX_BYTES = 256L << 20;  // a save is a few MB at most: anything bigger is not one
 
     /** What an import did: files written, the slots among them, the backup folder (null: there was nothing to keep). */
@@ -50,29 +40,10 @@ final class SaveFiles {
 
     static File saveDir() { return new File(Launcher.dataDir(), "user/save"); }
 
-    static String stamp() { return new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date()); }
+    static String stamp() { return new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(new Date()) + "-" + java.util.UUID.randomUUID().toString().substring(0, 8); }
 
-    /** The part of each path above the DATAnn/ or SYSTEM/ folders (the shortest one found), or null when none has them. */
-    static String prefix(List<String> paths) {
-        String best = null;
-        for (String p : paths) {
-            Matcher m = MARK.matcher(p);
-            if (m.find()) {
-                String pre = p.substring(0, m.start(1));
-                if (best == null || pre.length() < best.length()) best = pre;
-            }
-        }
-        return best;
-    }
-
-    /** The path under the save folder for an imported path, or null to skip it (outside the save, or unsafe). */
-    static String target(String path, String prefix) {
-        if (!path.startsWith(prefix)) return null;
-        String rel = path.substring(prefix.length());
-        if (rel.isEmpty() || rel.startsWith("/") || rel.contains("..") || rel.contains("\\")) return null;
-        if (rel.startsWith("__MACOSX/") || rel.endsWith(".DS_Store")) return null;
-        return rel;
-    }
+    static String prefix(List<String> paths) throws IOException { return SavePaths.prefix(paths); }
+    static String target(String path, String prefix) { return SavePaths.target(path, prefix); }
 
     static void copy(InputStream in, OutputStream out) throws IOException {
         byte[] buf = new byte[1 << 16];
@@ -107,45 +78,115 @@ final class SaveFiles {
         return name;
     }
 
-    static void write(Result r, String rel, InputStream in) throws IOException {
-        File out = new File(saveDir(), rel);
-        File dir = out.getParentFile();
-        if (dir != null && !dir.isDirectory() && !dir.mkdirs()) throw new IOException("cannot make " + dir);
-        try (OutputStream o = new FileOutputStream(out)) {
-            copy(in, o);
-        }
-        r.files++;
-        Matcher m = SLOT.matcher(rel);
-        if (m.find()) r.slots.add(m.group(1));
-    }
-
-    /** Null when the ZIP holds no saves. */
-    static Result importZip(ContentResolver cr, Uri uri) throws IOException {
-        List<String> names = new ArrayList<>();
-        long total = 0;
-        try (ZipInputStream z = new ZipInputStream(cr.openInputStream(uri))) {
-            for (ZipEntry e; (e = z.getNextEntry()) != null; )
-                if (!e.isDirectory()) {
-                    names.add(e.getName().replace('\\', '/'));
-                    total += Math.max(0, e.getSize());
-                }
-        }
-        String pre = prefix(names);
-        if (pre == null || total > MAX_BYTES) return null;
-        Result r = new Result();
-        r.backup = backup();
-        try (ZipInputStream z = new ZipInputStream(cr.openInputStream(uri))) {
-            for (ZipEntry e; (e = z.getNextEntry()) != null; ) {
-                if (e.isDirectory()) continue;
-                String rel = target(e.getName().replace('\\', '/'), pre);
-                if (rel != null) write(r, rel, z);
+    static void stageCopy(InputStream in, File out, long[] bytes) throws IOException {
+        if (in == null) throw new IOException("Não foi possível ler o save.");
+        try (OutputStream stream = new FileOutputStream(out)) {
+            byte[] buffer = new byte[65536];
+            for (int n; (n = in.read(buffer)) != -1;) {
+                bytes[0] += n;
+                if (bytes[0] > MAX_BYTES) throw new IOException("O pacote de saves é grande demais.");
+                stream.write(buffer, 0, n);
             }
         }
-        return r;
+    }
+    static File stageDir() throws IOException {
+        File dir = new File(Launcher.dataDir(), "user/.save-import-" + java.util.UUID.randomUUID());
+        if (!dir.mkdirs()) throw new IOException("Não foi possível preparar a importação.");
+        return dir;
+    }
+    static void removeStage(File dir) {
+        File[] kids = dir.listFiles();
+        if (kids != null) for (File f : kids) f.delete();
+        dir.delete();
+    }
+    static Result commit(Map<String, File> files) throws IOException {
+        if (files.isEmpty()) return null;
+        for (String name : files.keySet()) {
+            if (files.get(name).length() == 0) throw new IOException("Save vazio: " + name);
+            if (name.startsWith("data")) {
+                String stem = name.substring(0, name.lastIndexOf('.'));
+                if (!files.containsKey(stem + ".bin") || !files.containsKey(stem + ".binslot"))
+                    throw new IOException("Importe os dois arquivos do slot: " + stem + ".bin e " + stem + ".binslot.");
+            }
+        }
+        Result result = new Result();
+        result.backup = backup();
+        if (!saveDir().isDirectory() && !saveDir().mkdirs()) throw new IOException("Não foi possível criar user/save.");
+        List<String> written = new ArrayList<>();
+        try {
+            for (Map.Entry<String, File> entry : files.entrySet()) {
+                String name = entry.getKey();
+                written.add(name);
+                android.util.AtomicFile atomic = new android.util.AtomicFile(new File(saveDir(), name));
+                FileOutputStream stream = null;
+                try (InputStream in = new FileInputStream(entry.getValue())) {
+                    stream = atomic.startWrite();
+                    copy(in, stream);
+                    atomic.finishWrite(stream);
+                    stream = null;
+                } catch (IOException e) {
+                    if (stream != null) atomic.failWrite(stream);
+                    throw e;
+                }
+                result.files++;
+                if (name.startsWith("data")) result.slots.add(name.substring(4, 8));
+            }
+        } catch (IOException e) {
+            for (String name : written) {
+                File previous = result.backup == null ? null : new File(Launcher.dataDir(), "user/" + result.backup + "/" + name);
+                try {
+                    if (previous != null && previous.isFile()) copyTree(previous, new File(saveDir(), name));
+                    else new File(saveDir(), name).delete();
+                } catch (IOException restore) { e.addSuppressed(restore); }
+            }
+            throw e;
+        }
+        return result;
+    }
+    static Result importZip(ContentResolver cr, Uri uri) throws IOException {
+        File stage = stageDir();
+        Map<String, File> staged = new LinkedHashMap<>();
+        List<String> names = new ArrayList<>();
+        long[] bytes = {0};
+        try {
+            InputStream input = cr.openInputStream(uri);
+            if (input == null) throw new IOException("Não foi possível abrir o ZIP.");
+            try (ZipInputStream z = new ZipInputStream(input)) {
+                int count = 0;
+                byte[] discard = new byte[65536];
+                for (ZipEntry e; (e = z.getNextEntry()) != null;) {
+                    if (++count > 4096) throw new IOException("O ZIP contém arquivos demais.");
+                    if (e.isDirectory()) continue;
+                    String path = e.getName().replace('\\', '/');
+                    String name = path.substring(path.lastIndexOf('/') + 1);
+                    if (SavePaths.safe(path) && SavePaths.file(name)) {
+                        if (staged.containsKey(path)) throw new IOException("Save duplicado no ZIP.");
+                        File dest = new File(stage, "entry-" + count);
+                        stageCopy(z, dest, bytes);
+                        names.add(path);
+                        staged.put(path, dest);
+                    } else {
+                        for (int n; (n = z.read(discard)) != -1;) {
+                            bytes[0] += n;
+                            if (bytes[0] > MAX_BYTES) throw new IOException("O ZIP é grande demais.");
+                        }
+                    }
+                }
+            }
+            String prefix = prefix(names);
+            if (prefix == null) return null;
+            Map<String, File> files = new LinkedHashMap<>();
+            for (String path : names) {
+                String rel = target(path, prefix);
+                if (rel != null && files.put(rel, staged.get(path)) != null) throw new IOException("Save duplicado.");
+            }
+            return commit(files);
+        } finally { removeStage(stage); }
     }
 
     static void listTree(ContentResolver cr, Uri tree, String docId, String path, Map<String, Uri> out)
             throws IOException {
+        if (path.split("/").length > 16) throw new IOException("A pasta tem subpastas demais.");
         Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId);
         String[] cols = {Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE};
         try (Cursor c = cr.query(children, cols, null, null, null)) {
@@ -159,7 +200,7 @@ final class SaveFiles {
         }
     }
 
-    /** Null when the folder holds no saves. The folder itself may be one slot (DATA01) or SYSTEM. */
+    /** Null when the selected tree holds no P4G save files. */
     static Result importTree(ContentResolver cr, Uri tree) throws IOException {
         String root = DocumentsContract.getTreeDocumentId(tree);
         String rootName = "";
@@ -168,19 +209,23 @@ final class SaveFiles {
             if (c != null && c.moveToFirst()) rootName = c.getString(0);
         }
         Map<String, Uri> files = new LinkedHashMap<>();
-        listTree(cr, tree, root, rootName + "/", files);
+        listTree(cr, tree, root, rootName == null || rootName.isEmpty() ? "" : rootName + "/", files);
         String pre = prefix(new ArrayList<>(files.keySet()));
         if (pre == null) return null;
-        Result r = new Result();
-        r.backup = backup();
-        for (Map.Entry<String, Uri> f : files.entrySet()) {
-            String rel = target(f.getKey(), pre);
-            if (rel == null) continue;
-            try (InputStream in = cr.openInputStream(f.getValue())) {
-                if (in != null) write(r, rel, in);
+        File stage = stageDir();
+        Map<String, File> staged = new LinkedHashMap<>();
+        long[] bytes = {0};
+        try {
+            for (Map.Entry<String, Uri> f : files.entrySet()) {
+                String rel = target(f.getKey(), pre);
+                if (rel == null) continue;
+                if (staged.containsKey(rel)) throw new IOException("Save duplicado na pasta.");
+                File dest = new File(stage, "entry-" + staged.size());
+                try (InputStream in = cr.openInputStream(f.getValue())) { stageCopy(in, dest, bytes); }
+                staged.put(rel, dest);
             }
-        }
-        return r;
+            return commit(staged);
+        } finally { removeStage(stage); }
     }
 
     static void zipTree(ZipOutputStream z, File dir, String path) throws IOException {
@@ -204,7 +249,7 @@ final class SaveFiles {
         if (!hasFiles(saveDir())) return null;
         File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("cannot make " + dir);
-        File out = new File(dir, "P5R-saves-" + stamp() + ".zip");
+        File out = new File(dir, "P4G-saves-" + stamp() + ".zip");
         try (ZipOutputStream z = new ZipOutputStream(new FileOutputStream(out))) {
             zipTree(z, saveDir(), "save/");
         }
