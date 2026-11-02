@@ -58,6 +58,19 @@ void log(const char* fmt, ...) {
     vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
 
+    // Compact diagnostics by default. Keep errors and subsystem diagnostics;
+    // omit successful call-by-call traces that can grow to gigabytes.
+    static const bool verbose = [] {
+        const char* e = std::getenv("NX_VERBOSE_LOG");
+        return e && e[0] == '1';
+    }();
+    if (!verbose && (
+        std::strncmp(buf, "p4g: HLE enter ", 15) == 0 ||
+        std::strncmp(buf, "p4g: HLE exit ", 14) == 0 ||
+        std::strncmp(buf, "svc 0x", 6) == 0 ||
+        std::strncmp(buf, "nvn/vk: pipeline: ", 18) == 0))
+        return;
+
     std::lock_guard lk(g_log_lock);
 
     if (!g_log_file && plat::kDiagnostics) {
@@ -75,6 +88,8 @@ void log(const char* fmt, ...) {
         std::rename(file.c_str(), (file + ".prev").c_str());
 
         g_log_file = std::fopen(file.c_str(), "w");
+        if (g_log_file && !verbose)
+            std::fprintf(g_log_file, "p4g: compact log effects-v1 (repetitive call traces disabled)\n");
     }
 
     plat::log_line(buf);
