@@ -147,6 +147,20 @@ const char* hle_current_name() {
     return t_missing_name;
 }
 
+// Diagnostic only: forward a linked GetAudioOutState to the original SDK
+// export, preserving its return value rather than guessing the state ABI.
+static void trace_audio_out_state(CPU& c) {
+    const char* name = hle_current_name();
+    const uint64_t real = find_symbol(name);
+    static std::atomic<unsigned> count{0};
+    const bool report = count.fetch_add(1, std::memory_order_relaxed) < 8;
+    if (report)
+        log("audio: SDK GetAudioOutState enter: caller=%s", describe(c.x[30]).c_str());
+    call(c, real);
+    if (report)
+        log("audio: SDK GetAudioOutState return=%llu", (unsigned long long)c.x[0]);
+}
+
 uint64_t hook_function(uint64_t addr, HleFn fn) {
 #if NX_NCE
     return nce::hook(addr, fn);
@@ -596,6 +610,17 @@ void load_modules(
 
             if (!target && !s.imported) {
                 target = lm.base + s.value;
+            }
+
+            if (std::strstr(s.name, "_ZN2nn5audio") == s.name) {
+                log("audio: link: module=%s symbol=%s route=%s target=%llx",
+                    mi->name, s.name, !target ? "unresolved" :
+                    (target - kThunkBase < kThunkSize ? "HLE" : "guest"),
+                    (unsigned long long)target);
+                // Only wrap a known SDK export, never a missing symbol or HLE.
+                if (std::strstr(s.name, "GetAudioOutState") && target &&
+                    target == find_symbol(s.name) && !hle_lookup(s.name))
+                    target = hle_address_or(s.name, trace_audio_out_state);
             }
 
             // P4G diagnostic: record unresolved imports.

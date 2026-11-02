@@ -36,6 +36,7 @@ struct Out {
     std::shared_ptr<EventState> event = std::make_shared<EventState>();
     uint32_t channels = 2;  // from the AudioOutParameter of the open
     bool started = false;
+    uint64_t starts = 0, appends = 0, submissions = 0;
     // statistics since the last log (every 1000 buffers)
     uint64_t buffers = 0, silent = 0;
     int peak = 0;
@@ -87,6 +88,7 @@ void player() {
     log("audio: %s", device ? "device output (48 kHz stereo s16)" : "no audio device, timer pacing");
     using clock = std::chrono::steady_clock;
     auto next = clock::now();
+    auto report_at = next + std::chrono::seconds(2);
     for (;;) {
         uint64_t buf = 0, size = 0;
         {
@@ -95,6 +97,13 @@ void player() {
                 return g_out.started && !g_out.queued.empty() && (!device || plat::audio_queued() < kMaxInFlight);
             };
             g_out.cv.wait_for(lk, std::chrono::milliseconds(5), ready);
+            if (clock::now() >= report_at) {
+                log("audio: queue status: started=%u starts=%llu appends=%llu queued=%zu released=%zu submissions=%llu",
+                    unsigned(g_out.started), (unsigned long long)g_out.starts,
+                    (unsigned long long)g_out.appends, g_out.queued.size(), g_out.released.size(),
+                    (unsigned long long)g_out.submissions);
+                report_at = clock::now() + std::chrono::seconds(2);
+            }
             if (!ready()) continue;
             buf = g_out.queued.front();
             g_out.queued.pop_front();
@@ -118,8 +127,11 @@ void player() {
             out_size = frames * 4;
         }
         if (device && plat::audio_submit(reinterpret_cast<const void*>(ld<uint64_t>(buf)), out_size,
-                                         reinterpret_cast<void*>(buf)))
+                                         reinterpret_cast<void*>(buf))) {
+            std::lock_guard lk(g_out.lock);
+            ++g_out.submissions;
             continue;
+        }
         next = std::max(next, clock::now() - std::chrono::milliseconds(50));
         next += std::chrono::microseconds(size * 1000000 / (kBytesPerSecond / 2 * g_out.channels));
         std::this_thread::sleep_until(next);
@@ -134,6 +146,7 @@ void InitializeAudioOutParameter(CPU& c) {  // {u32 sample_rate; u16 channels; u
 }
 
 void OpenDefaultAudioOut(CPU& c) {  // (AudioOut*, os::SystemEvent*, const AudioOutParameter&)
+    log("audio: diagnostic build queue-state-v1");
     uint64_t out = c.x[0], sysev = c.x[1];
     {
         const uint32_t rate = ld<uint32_t>(c.x[2]), ch = ld<uint16_t>(c.x[2] + 4);
@@ -166,6 +179,8 @@ void OpenDefaultAudioOut(CPU& c) {  // (AudioOut*, os::SystemEvent*, const Audio
 void StartAudioOut(CPU& c) {
     std::lock_guard lk(g_out.lock);
     g_out.started = true;
+    ++g_out.starts;
+    log("audio: StartAudioOut: queued=%zu caller=%s", g_out.queued.size(), describe(c.x[30]).c_str());
     g_out.cv.notify_all();
     c.x[0] = 0;
 }
@@ -173,6 +188,7 @@ void StartAudioOut(CPU& c) {
 void StopAudioOut(CPU&) {
     std::lock_guard lk(g_out.lock);
     g_out.started = false;
+    log("audio: StopAudioOut: queued=%zu", g_out.queued.size());
 }
 
 void CloseAudioOut(CPU&) {}
@@ -187,6 +203,10 @@ void GetAudioOutBufferDataPointer(CPU& c) { c.x[0] = ld<uint64_t>(c.x[0]); }
 
 void AppendAudioOutBuffer(CPU& c) {  // (AudioOut*, AudioOutBuffer*)
     std::lock_guard lk(g_out.lock);
+    if (++g_out.appends <= 3)
+        log("audio: AppendAudioOutBuffer: buffer=%llx bytes=%llu started=%u caller=%s",
+            (unsigned long long)c.x[1], (unsigned long long)ld<uint64_t>(c.x[1] + 16),
+            unsigned(g_out.started), describe(c.x[30]).c_str());
     out_stats(c.x[1]);
     g_out.queued.push_back(c.x[1]);
     g_out.cv.notify_all();
