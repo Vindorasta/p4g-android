@@ -767,6 +767,28 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             return false;
         }
     }
+    // Entry zoom also uses a988 to repeatedly copy/expand the full scene.
+    // In the two recorded batches, this six-vertex, depth-writing scene-copy
+    // path occurs only in the battle-entry interval, not the attack interval.
+    if (vs->hash == "547d293498cbedcf" && fs && fs->hash == "a988505474266a8c" &&
+        !indexed && c.i[1] == 6 && g_textures.resolved.size() == 1 && t.color_count && t.colors[0] &&
+        g_state.depth.depth_test && g_state.depth.depth_write && g_state.depth.depth_func == 8 &&
+        g_state.color.blend_enable[0] && g_state.blend[0].src_rgb == 5 && g_state.blend[0].dst_rgb == 6) {
+        const uint64_t texture = g_textures.resolved[0].texture;
+        const GpuImage* source = texture ? image_of(texture) : nullptr;
+        const GpuImage* destination = image_of(t.colors[0]);
+        if (source && destination && source->rendered && texture != t.colors[0] &&
+            source->width >= 640 && source->height >= 360 &&
+            source->width == destination->width && source->height == destination->height &&
+            std::abs(int64_t(source->width) * 9 - int64_t(source->height) * 16) <= 16) {
+            static uint64_t skipped_zoom = 0;
+            if (++skipped_zoom <= 8 || skipped_zoom % 1000 == 0)
+                log("p4g: battle zoom suppressed v2 count=%llu frame=%llu source=%ux%u target=%ux%u",
+                    (unsigned long long)skipped_zoom, (unsigned long long)g_frame.load(),
+                    source->width, source->height, destination->width, destination->height);
+            return false;
+        }
+    }
     // Optional visual compromise: suppress partial-alpha scene feedback copies.
     // Keep opaque scene transfer passes and ordinary atlas sprites unchanged.
     static bool removal_announced = false;
