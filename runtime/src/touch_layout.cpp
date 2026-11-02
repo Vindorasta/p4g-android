@@ -81,6 +81,8 @@ struct Layout {
 const Layout kLayouts[] = {
     {"wonder", kWonder, std::size(kWonder), false, kY, 0.15f, 0.72f},
     {"p5r", kP5R, std::size(kP5R), true, 0, 0.15f, 0.76f},
+    // P4G's ControlsEditor uses this same layout. Register it for drawing and hit-testing.
+    {"p4g", kP5R, std::size(kP5R), true, 0, 0.15f, 0.76f},
 };
 
 const Layout* layout() {
