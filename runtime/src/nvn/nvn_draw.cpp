@@ -743,6 +743,30 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             }
         }
     }
+    // Battle-entry distortion experiment: suppress the ec20/18ad meshes that
+    // resample a full rendered scene into a distinct equal-size scene target.
+    // These draws occur during the entry effect in the captured trace. Keep
+    // the shader available for ordinary atlas-based aura/attack effects.
+    if (vs->hash == "ec20aad1520546db" && fs && fs->hash == "18ad01dc70644d6f" &&
+        indexed && g_textures.resolved.size() == 1 && t.color_count && t.colors[0] &&
+        g_state.depth.depth_test && !g_state.depth.depth_write && g_state.depth.depth_func == 2 &&
+        g_state.color.blend_enable[0] && g_state.blend[0].src_rgb == 5 &&
+        (g_state.blend[0].dst_rgb == 2 || g_state.blend[0].dst_rgb == 6)) {
+        const uint64_t texture = g_textures.resolved[0].texture;
+        const GpuImage* source = texture ? image_of(texture) : nullptr;
+        const GpuImage* destination = image_of(t.colors[0]);
+        if (source && destination && source->rendered && texture != t.colors[0] &&
+            source->width >= 640 && source->height >= 360 &&
+            source->width == destination->width && source->height == destination->height &&
+            std::abs(int64_t(source->width) * 9 - int64_t(source->height) * 16) <= 16) {
+            static uint64_t skipped_distortion = 0;
+            if (++skipped_distortion <= 8 || skipped_distortion % 1000 == 0)
+                log("p4g: battle distortion suppressed v1 count=%llu frame=%llu source=%ux%u target=%ux%u",
+                    (unsigned long long)skipped_distortion, (unsigned long long)g_frame.load(),
+                    source->width, source->height, destination->width, destination->height);
+            return false;
+        }
+    }
     // Optional visual compromise: suppress partial-alpha scene feedback copies.
     // Keep opaque scene transfer passes and ordinary atlas sprites unchanged.
     static bool removal_announced = false;
