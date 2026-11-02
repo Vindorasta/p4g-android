@@ -826,7 +826,7 @@ std::unique_ptr<PipeBuild> prepare_graphics_pipeline(const PipelineKey& key, con
     rs.frontFace = key.polygon.front == 0 ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE;
     
     // Compensa a inversao vertical do vertex shader 3D do P4G.
-    if (key.vs && key.vs->hash == "937df4e3272e6853") {
+    if (key.vs && (key.vs->hash == "937df4e3272e6853" || key.vs->hash == "ec20aad1520546db")) {
         rs.frontFace = (rs.frontFace == VK_FRONT_FACE_CLOCKWISE)
             ? VK_FRONT_FACE_COUNTER_CLOCKWISE
             : VK_FRONT_FACE_CLOCKWISE;
