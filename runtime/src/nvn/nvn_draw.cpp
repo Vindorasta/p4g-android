@@ -11,6 +11,7 @@
 #include <string>
 #include <cstring>
 #include <set>
+#include <map>
 
 #include "nvn_draw_state.h"
 #include "nvn_ultrawide.h"
@@ -832,6 +833,24 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         sc = {{sc.offset.x * 3 / 4, sc.offset.y * 3 / 4}, {sc.extent.width * 3 / 4, sc.extent.height * 3 / 4}};
     }
     vp.y += vp.height, vp.height = -vp.height;
+    {   // Compact effect diagnostics: one record per shader/state combination per 5 s.
+        // This inventories usage; it does not identify an effect by its hash alone.
+        static std::map<std::string, uint64_t> reports;
+        char state[160];
+        std::snprintf(state, sizeof state, " rt=%ux%u depth=%u blend=%u cull=%u viewportY=%s",
+            g_pass_extent.width, g_pass_extent.height, unsigned(key.depth.depth_test),
+            unsigned(key.color.blend_enable[0]), unsigned(key.polygon.cull), vp.height < 0 ? "negative" : "positive");
+        const std::string tag = "vs=" + vs->hash + " fs=" + (fs ? fs->hash : "-") + state;
+        auto it = reports.find(tag);
+        if (it != reports.end() || reports.size() < 128) {
+            const uint64_t now = plat::monotonic_ns();
+            if (it == reports.end() || now - it->second >= 5'000'000'000ull) {
+                reports[tag] = now;
+                log("p4g: effects-use t=%.3f frame=%llu %s", double(now) / 1e9,
+                    (unsigned long long)g_frame.load(), tag.c_str());
+            }
+        }
+    }
     set_dynamic(cb, vp, sc);
 
     trace_skin(indexed, c, vs, fs);
