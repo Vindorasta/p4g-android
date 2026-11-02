@@ -743,6 +743,8 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             }
         }
     }
+    static bool entry_effect_seen = false;
+    static uint64_t last_entry_effect_frame = 0;
     // Battle-entry distortion experiment: suppress the ec20/18ad meshes that
     // resample a full rendered scene into a distinct equal-size scene target.
     // These draws occur during the entry effect in the captured trace. Keep
@@ -759,6 +761,8 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             source->width >= 640 && source->height >= 360 &&
             source->width == destination->width && source->height == destination->height &&
             std::abs(int64_t(source->width) * 9 - int64_t(source->height) * 16) <= 16) {
+            entry_effect_seen = true;
+            last_entry_effect_frame = g_frame.load();
             static uint64_t skipped_distortion = 0;
             if (++skipped_distortion <= 8 || skipped_distortion % 1000 == 0)
                 log("p4g: battle distortion suppressed v1 count=%llu frame=%llu source=%ux%u target=%ux%u",
@@ -781,6 +785,8 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             source->width >= 640 && source->height >= 360 &&
             source->width == destination->width && source->height == destination->height &&
             std::abs(int64_t(source->width) * 9 - int64_t(source->height) * 16) <= 16) {
+            entry_effect_seen = true;
+            last_entry_effect_frame = g_frame.load();
             static uint64_t skipped_zoom = 0;
             if (++skipped_zoom <= 8 || skipped_zoom % 1000 == 0)
                 log("p4g: battle zoom suppressed v2 count=%llu frame=%llu source=%ux%u target=%ux%u",
@@ -905,7 +911,22 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
             // Reuse the original aligned fragment variant only for fully
             // inspected, constant-alpha quads. Additive copies and gradients
             // retain the removal behavior confirmed on the phone.
-            if (uniform_quad) {
+            // nx (15) restores alpha=254/255 quads just after entry. Test
+            // suppressing that near-opaque scene replay only within a short
+            // entry window, preserving the exploration-layer restoration.
+            const uint64_t now_frame = g_frame.load();
+            const bool recent_entry = entry_effect_seen && now_frame >= last_entry_effect_frame &&
+                now_frame - last_entry_effect_frame <= 90;
+            const bool entry_flash = uniform_quad && recent_entry && alpha >= 0.99f;
+            const bool restore_uniform_layer = uniform_quad && !entry_flash;
+            if (entry_flash) {
+                static uint64_t skipped_flash = 0;
+                if (++skipped_flash <= 12 || skipped_flash % 1000 == 0)
+                    log("p4g: post-entry scene flash suppressed v1 count=%llu frame=%llu after=%llu alpha=%g",
+                        (unsigned long long)skipped_flash, (unsigned long long)now_frame,
+                        (unsigned long long)(now_frame - last_entry_effect_frame), alpha);
+            }
+            if (restore_uniform_layer) {
                 static const std::unique_ptr<ShaderInfo> aligned_scene = [fs] {
                     auto result = std::make_unique<ShaderInfo>(*fs);
                     result->hash = kP4gOverlayAlignedHash;
@@ -919,7 +940,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
                     log("p4g: original scene layer restored count=%llu frame=%llu alpha=%g",
                         (unsigned long long)restored, (unsigned long long)g_frame.load(), alpha);
             }
-            const bool remove_copy = !uniform_quad && (remove_original || gradient_copy);
+            const bool remove_copy = !restore_uniform_layer && (remove_original || gradient_copy);
             if (remove_copy) {
                 static uint64_t skipped = 0;
                 if (++skipped <= 12 || skipped % 1000 == 0) {
