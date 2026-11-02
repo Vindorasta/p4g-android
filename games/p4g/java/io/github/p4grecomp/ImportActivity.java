@@ -80,6 +80,7 @@ public class ImportActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        P4gTheme.apply(this);
 
         getWindow().addFlags(
             WindowManager.LayoutParams.FLAG_FULLSCREEN |
@@ -88,14 +89,14 @@ public class ImportActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.rgb(20, 4, 6));
+        root.setBackgroundColor(P4gTheme.BACKGROUND);
 
         int pad = dp(32);
         root.setPadding(pad, pad, pad, pad);
 
         TextView title = new TextView(this);
-        title.setText("Preparando Persona 4 Golden");
-        title.setTextColor(Color.rgb(230, 0, 18));
+        title.setText("Preparando P4G");
+        title.setTextColor(P4gTheme.YELLOW);
         title.setTextSize(26);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         root.addView(title);
@@ -105,7 +106,7 @@ public class ImportActivity extends Activity {
             "Extraindo e analisando os shaders GXP. " +
             "A traducao para Vulkan ainda esta em desenvolvimento."
         );
-        note.setTextColor(Color.rgb(200, 200, 200));
+        note.setTextColor(P4gTheme.MUTED);
         note.setTextSize(15);
         note.setPadding(0, dp(8), 0, dp(20));
         root.addView(note);
@@ -115,6 +116,8 @@ public class ImportActivity extends Activity {
             null,
             android.R.attr.progressBarStyleHorizontal
         );
+        bar.setProgressTintList(android.content.res.ColorStateList.valueOf(P4gTheme.YELLOW));
+        bar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(P4gTheme.PANEL));
         bar.setMax(1000);
 
         root.addView(
@@ -133,6 +136,7 @@ public class ImportActivity extends Activity {
 
         // Botao 1: exportar relatorio de cabecalhos.
         exportReport = new Button(this);
+        P4gTheme.button(exportReport, false);
         exportReport.setAllCaps(false);
         exportReport.setTextSize(17);
         exportReport.setText("Exportar diagnostico GXP");
@@ -158,6 +162,7 @@ public class ImportActivity extends Activity {
 
         // Botao 2: exportar um programa GXP completo.
         exportShader = new Button(this);
+        P4gTheme.button(exportShader, false);
         exportShader.setAllCaps(false);
         exportShader.setTextSize(17);
         exportShader.setText("Exportar GXP de teste");
@@ -173,6 +178,7 @@ public class ImportActivity extends Activity {
         root.addView(exportShader);
 
         back = new Button(this);
+        P4gTheme.button(back, false);
         back.setAllCaps(false);
         back.setTextSize(18);
         back.setText("Voltar");

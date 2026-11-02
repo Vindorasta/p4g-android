@@ -7,14 +7,9 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.pm.ShortcutInfo;
-import android.content.pm.ShortcutManager;
 import android.database.Cursor;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
-import android.graphics.drawable.Icon;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -46,31 +41,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * The home screen in front of the game (a NativeActivity, libp4g.so): checks for the player's data in Internal
- * storage/Persona 4 Golden (asking for all-files access), shows the options and writes them to that folder's
- * config.txt, whose NX_* lines the runtime turns into its switches:
- *   game text   the language of the game's texts and subtitles (language=auto, default: the device's, English when
- *               the game lacks it; or en-US, es, fr, de, it, ja, ko, zh-Hans, zh-Hant). The voices are the game's own
- *               option.
- *   resolution  720p (NX_HANDHELD=1, default) or 1080p (NX_HANDHELD=0)
- *   interface   at 720p (NX_HUD_1080=0, default: faster) or, in 720p, drawn at 1080p (NX_HUD_1080=1: sharper text)
- *   graphics    low (default), medium or high: textures one mip smaller (NX_LOD_BIAS=1), half a mip, or the game's
- *               own. (A lower render resolution needs the engine's target sizes: games/p4g/PROGRESO.md.)
- *   frame rate  30 (NX_FPS_CAP=30, default) or 60 (NX_FPS_CAP=60: runtime support varies by title)
- *   FPS counter off (default) or on (NX_SHOW_FPS)
- *   shadows     off (NX_SHADOWS=0, default: the shadow maps are not drawn, ~9% of the GPU on the 3D title) or on
- *   on-screen controls on (default) or off (NX_TOUCH_SHOW), their size (NX_TOUCH_SIZE) and opacity (NX_TOUCH_OPACITY),
- *               and where they are (NX_TOUCH_LAYOUT, written by ControlsEditor)
- * and imports or exports the saves (user/save, SaveFiles.java): a ZIP or a folder in, a ZIP in Download out.
- * The game: the player picks their own NSP or XCI (Persona 4 Golden 1.0.0) and prod.keys here; ImportActivity checks
- * them and translates the game's shaders once, and every start reads the game from that file as it is (the runtime's
- * game_image.cpp, through NX_GAME_FD / NX_GAME_NAME / NX_KEYS). Nothing of the game is copied but its shaders. A data
- * folder made on a PC (exefs/ or analysis/, extract/romfs, spirv/) still works when no file was picked.
- * The icon: a home screen shortcut with a picture of the player's own (Android lets an app pin shortcuts, not change
- * its own icon).
- * Other lines of config.txt are kept as they were. The launcher itself speaks the device's language (Lang.java:
- * Spanish, English, French, German, Italian, Portuguese, Japanese, Korean, Chinese; English otherwise).
+/** Home screen for P4G. Options retain their existing config keys.
+ * Output size, texture detail, frame pacing, input and file-management controls
+ * are exposed here. Renderer options that do not match the observed P4G paths
+ * are omitted. Unknown config entries are preserved by load/save.
  */
 public class Launcher extends Activity {
     static final String DATA = "Persona 4 Golden";
@@ -95,7 +69,7 @@ public class Launcher extends Activity {
     final Map<String, String> config = new LinkedHashMap<>();
     TextView status;
     Button play;
-    static final int PICK_ZIP = 1, PICK_FOLDER = 2, PICK_GAME = 3, PICK_KEYS = 4, PICK_ICON = 5, PREPARE = 6, PICK_CPK = 7;
+    static final int PICK_ZIP = 1, PICK_FOLDER = 2, PICK_GAME = 3, PICK_KEYS = 4, PREPARE = 6, PICK_CPK = 7;
 
     String t(String spanish, String english) { return Lang.t(spanish, english); }
 
@@ -252,38 +226,6 @@ public class Launcher extends Activity {
         }
     }
 
-    // A home screen shortcut with the player's picture (cropped to a square; an adaptive icon, so the home screen gives
-    // it its own shape).
-    void onIconPicked(Uri uri) {
-        try {
-            Bitmap src;
-            try (InputStream in = getContentResolver().openInputStream(uri)) {
-                src = BitmapFactory.decodeStream(in);
-            }
-            if (src == null) throw new IllegalArgumentException("not a picture");
-            int side = Math.min(src.getWidth(), src.getHeight());
-            Bitmap square = Bitmap.createBitmap(src, (src.getWidth() - side) / 2, (src.getHeight() - side) / 2, side, side);
-            Bitmap icon = Bitmap.createScaledBitmap(square, 432, 432, true);
-            ShortcutManager sm = getSystemService(ShortcutManager.class);
-            if (sm == null || !sm.isRequestPinShortcutSupported()) {
-                tell(t("Icono", "Icon"), t("Tu pantalla de inicio no admite accesos directos.",
-                        "Your home screen does not support shortcuts."));
-                return;
-            }
-            Intent launch = new Intent(this, Launcher.class).setAction(Intent.ACTION_MAIN);
-            ShortcutInfo info = new ShortcutInfo.Builder(this, "picture_" + System.currentTimeMillis())
-                    .setShortLabel("P4G").setLongLabel("Persona 4 Golden").setIcon(Icon.createWithAdaptiveBitmap(icon))
-                    .setIntent(launch).build();
-            sm.requestPinShortcut(info, null);
-            tell(t("Icono", "Icon"), t("Acepta el aviso para poner el acceso directo con tu imagen en la pantalla de inicio. "
-                            + "El icono del cajón de apps no cambia: Android no deja que una app cambie el suyo.",
-                    "Accept the prompt to put the shortcut with your picture on the home screen. The icon in the app "
-                            + "drawer stays: Android does not let an app change its own."));
-        } catch (Exception e) {
-            tell(t("Icono", "Icon"), t("No se pudo usar esa imagen.", "That picture could not be used."));
-        }
-    }
-
     // The recompiled build reads analysis/main.bin, the native one (the game's own code) exefs/main.
     boolean hasData() {
         return new File(dataDir(), "exefs/main").canRead() || new File(dataDir(), "analysis/main.bin").canRead();
@@ -317,6 +259,7 @@ public class Launcher extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        P4gTheme.apply(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
         // The game's texts and subtitles (runtime language.h): its own language names, as a console lists them.
         options.add(new Option("language", "Idioma de textos y subtítulos", "Text and subtitle language",
@@ -325,7 +268,7 @@ public class Launcher extends Activity {
                         "Italiano", "日本語", "한국어", "简体中文", "繁體中文"},
                 new String[] {"Automatic (device language)", "English", "Español", "Français", "Deutsch", "Italiano",
                         "日本語", "한국어", "简体中文", "繁體中文"}, 0));
-        options.add(new Option("RESOLUTION", "Resolución", "Resolution",
+        options.add(new Option("RESOLUTION", "Resolución de salida", "Output resolution",
                 new String[] {"360p", "480p", "720p", "1080p"},
                 new String[] {"360p", "480p", "720p", "1080p"},
                 new String[] {"360p", "480p", "720p", "1080p"}, 2));
@@ -333,15 +276,10 @@ public class Launcher extends Activity {
                 new String[] {"0", "1"},
                 new String[] {"Desactivada", "Activada"},
                 new String[] {"Off", "On"}, 0));
-        options.add(new Option("NX_HUD_1080", "Interfaz", "Interface", new String[] {"0", "1"},
-                new String[] {"720p (más rápida)", "1080p (textos nítidos)"},
-                new String[] {"720p (faster)", "1080p (sharp text)"}, 0));
-        options.add(new Option("GRAPHICS", "Gráficos", "Graphics", new String[] {"low", "medium", "high"},
+        options.add(new Option("GRAPHICS", "Detalle de texturas", "Texture detail", new String[] {"low", "medium", "high"},
                 new String[] {"Bajos", "Medios", "Altos"}, new String[] {"Low", "Medium", "High"}, 0));
-        options.add(new Option("NX_FPS_CAP", "Fotogramas por segundo", "Frame rate", new String[] {"30", "60"},
-                new String[] {"30 fps", "60 fps (experimental)"}, new String[] {"30 fps", "60 fps (experimental)"}, 0));
-        options.add(new Option("NX_SHADOWS", "Sombras", "Shadows", new String[] {"0", "1"},
-                new String[] {"Desactivadas", "Activadas"}, new String[] {"Off", "On"}, 0));
+        options.add(new Option("NX_FPS_CAP", "Límite de FPS", "FPS limit", new String[] {"30", "60"},
+                new String[] {"30 fps", "Predeterminado del juego"}, new String[] {"30 fps", "Game default"}, 0));
         options.add(new Option("NX_SHOW_FPS", "Contador de FPS", "FPS counter", new String[] {"0", "1"},
                 new String[] {"Desactivado", "Activado"}, new String[] {"Off", "On"}, 0));
         options.add(new Option("NX_TOUCH_SHOW", "Controles táctiles", "On-screen controls", new String[] {"1", "0"},
@@ -352,14 +290,6 @@ public class Launcher extends Activity {
         options.add(new Option("NX_TOUCH_OPACITY", "Opacidad de los botones", "Button opacity",
                 new String[] {"50", "85", "100"}, new String[] {"Baja", "Normal", "Alta"},
                 new String[] {"Low", "Normal", "High"}, 1));
-        options.add(new Option("NX_NO_CROWD", "Gente / Multitudes de NPCs", "Crowd NPCs",
-                new String[] {"0", "1"},
-                new String[] {"Activada (normal)", "Desactivada (más FPS)"},
-                new String[] {"Enabled (normal)", "Disabled (more FPS)"}, 0));
-        options.add(new Option("NX_DISABLE_BLOOM", "Post-procesado (bloom/brillo)", "Post-processing (bloom)",
-                new String[] {"0", "1"},
-                new String[] {"Activado (normal)", "Desactivado (más FPS)"},
-                new String[] {"Enabled (normal)", "Disabled (more FPS)"}, 0));
         options.add(new Option("NX_GAMEPAD_LAYOUT", "Botones del mando físico", "Physical gamepad buttons",
                 new String[] {"0", "1"},
                 new String[] {"Nintendo (A dcha, B abajo)", "Xbox / PC (A abajo, B dcha)"},
@@ -384,23 +314,33 @@ public class Launcher extends Activity {
     void build() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.rgb(20, 4, 6));
+        root.setBackgroundColor(P4gTheme.BACKGROUND);
         int pad = dp(24);
         root.setPadding(pad, pad, pad, pad);
 
         TextView title = new TextView(this);
-        title.setText("PERSONA 4 GOLDEN");
-        title.setTextColor(Color.rgb(230, 0, 18));
+        title.setText("P4G");
+        title.setTextColor(P4gTheme.INK);
+        title.setBackgroundColor(P4gTheme.YELLOW);
+        title.setPadding(dp(12), dp(8), dp(12), dp(8));
         title.setTextSize(30);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         root.addView(title);
+        TextView version = new TextView(this);
+        version.setText("PRE-ALPHA  ·  0.0.1");
+        version.setTextColor(P4gTheme.YELLOW);
+        version.setTextSize(13);
+        version.setTypeface(Typeface.DEFAULT_BOLD);
+        version.setPadding(0, dp(10), 0, 0);
+        root.addView(version);
 
         status = new TextView(this);
-        status.setTextColor(Color.rgb(220, 220, 220));
+        status.setTextColor(P4gTheme.MUTED);
         status.setTextSize(14);
         status.setPadding(0, dp(6), 0, dp(14));
         root.addView(status);
 
+        P4gTheme.section(root, t("Preparación", "Game setup"));
         addRow(root, t("Archivo del juego (.nsp / .xci)", "Game file (.nsp / .xci)"), t("Elegir", "Choose"),
                 new View.OnClickListener() {
                     @Override
@@ -414,14 +354,12 @@ public class Launcher extends Activity {
                 pick(PICK_KEYS, "*/*", true);
             }
         });
-        addRow(root, t("Icono", "Icon"), t("Elegir imagen", "Choose a picture"), new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                pick(PICK_ICON, "image/*", false);
-            }
-        });
+
 
         for (final Option o : options) {
+            if ("language".equals(o.key)) P4gTheme.section(root, t("Preferencias", "Game preferences"));
+            if ("RESOLUTION".equals(o.key)) P4gTheme.section(root, t("Imagen y rendimiento", "Display and performance"));
+            if ("NX_TOUCH_SHOW".equals(o.key)) P4gTheme.section(root, t("Controles", "Controls"));
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
@@ -432,6 +370,7 @@ public class Launcher extends Activity {
             name.setTextSize(17);
             row.addView(name, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
             final Button value = new Button(this);
+            P4gTheme.button(value, false);
             value.setAllCaps(false);
             value.setMinWidth(dp(180));
             row.addView(value);
@@ -457,6 +396,7 @@ public class Launcher extends Activity {
         editName.setTextSize(17);
         edit.addView(editName, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         Button editButton = new Button(this);
+        P4gTheme.button(editButton, false);
         editButton.setAllCaps(false);
         editButton.setMinWidth(dp(180));
         editButton.setText(t("Mover", "Move"));
@@ -474,6 +414,7 @@ public class Launcher extends Activity {
         });
         root.addView(edit);
 
+        P4gTheme.section(root, t("Archivos y soporte", "Files and support"));
         // Saves: in from a ZIP or a folder (a Switch backup or another player's), out to a ZIP in Download.
         LinearLayout saves = new LinearLayout(this);
         saves.setOrientation(LinearLayout.HORIZONTAL);
@@ -485,11 +426,13 @@ public class Launcher extends Activity {
         savesName.setTextSize(17);
         saves.addView(savesName, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         Button importButton = new Button(this);
+        P4gTheme.button(importButton, false);
         importButton.setAllCaps(false);
         importButton.setMinWidth(dp(88));
         importButton.setText(t("Importar", "Import"));
         saves.addView(importButton);
         Button exportButton = new Button(this);
+        P4gTheme.button(exportButton, false);
         exportButton.setAllCaps(false);
         exportButton.setMinWidth(dp(88));
         exportButton.setText(t("Exportar", "Export"));
@@ -527,6 +470,7 @@ public class Launcher extends Activity {
         transName.setTextSize(17);
         transRow.addView(transName, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         Button transButton = new Button(this);
+        P4gTheme.button(transButton, false);
         transButton.setAllCaps(false);
         transButton.setMinWidth(dp(180));
         transButton.setText(t("Importar CPK", "Import CPK"));
@@ -554,6 +498,7 @@ public class Launcher extends Activity {
         logsName.setTextSize(17);
         logsRow.addView(logsName, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         Button logsButton = new Button(this);
+        P4gTheme.button(logsButton, false);
         logsButton.setAllCaps(false);
         logsButton.setMinWidth(dp(180));
         logsButton.setText(t("Exportar registros", "Export logs"));
@@ -569,8 +514,7 @@ public class Launcher extends Activity {
         play = new Button(this);
         play.setTextSize(20);
         play.setAllCaps(false);
-        play.setBackgroundColor(Color.rgb(230, 0, 18));
-        play.setTextColor(Color.WHITE);
+        P4gTheme.button(play, true);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(64));
         lp.topMargin = dp(18);
         root.addView(play, lp);
@@ -652,7 +596,7 @@ public class Launcher extends Activity {
             play.setText(t("Preparar el juego", "Prepare the game"));
         } else if (gameUri() != null) {
             status.setText(Lang.f("Shaders preparados: %s (runtime experimental)", "Shaders prepared: %s (experimental runtime)", gameName()));
-            play.setText("Testar inicializacao do P4G");
+            play.setText(t("Jugar", "Play"));
         } else if (!hasData()) {
             status.setText(t("Elige el archivo de tu juego (.nsp o .xci de Persona 4 Golden 1.0.0) y tu prod.keys.",
                     "Choose your game file (a Persona 4 Golden 1.0.0 .nsp or .xci) and your prod.keys."));
@@ -665,7 +609,7 @@ public class Launcher extends Activity {
             play.setText(t("Volver a buscar", "Look again"));
         } else {
             status.setText(Lang.f("Datos listos: %s", "Data ready: %s", dataDir().getPath()));
-            play.setText("Testar inicializacao do P4G");
+            play.setText(t("Jugar", "Play"));
         }
     }
 
@@ -732,10 +676,6 @@ public class Launcher extends Activity {
         if (request == PICK_GAME) {
             onGamePicked(data.getData());
             refresh();
-            return;
-        }
-        if (request == PICK_ICON) {
-            onIconPicked(data.getData());
             return;
         }
         if (request == PICK_CPK) {
@@ -931,6 +871,7 @@ public class Launcher extends Activity {
         name.setTextSize(17);
         row.addView(name, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
         Button b = new Button(this);
+        P4gTheme.button(b, false);
         b.setAllCaps(false);
         b.setMinWidth(dp(180));
         b.setText(button);

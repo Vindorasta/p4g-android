@@ -6,8 +6,8 @@
      The recompiled build (analysis/ and the game's code compiled in) is private to the owner of the game. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.p4grecomp"
-    android:versionCode="8"
-    android:versionName="0.5.0">
+    android:versionCode="9"
+    android:versionName="0.0.1-pre-alpha">
 
     <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
@@ -19,7 +19,9 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application
-        android:label="Persona 4 Golden"
+        android:label="P4G"
+        android:icon="@mipmap/p4g_icon"
+        android:roundIcon="@mipmap/p4g_icon"
         android:requestLegacyExternalStorage="true"
         android:hasCode="true"
         android:extractNativeLibs="true"

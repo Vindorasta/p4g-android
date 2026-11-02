@@ -54,6 +54,16 @@ final class Lang {
     }
 
     static {
+        put("Output resolution", "Output resolution", "Output resolution", "Output resolution", "Resolução de saída", "Output resolution", "Output resolution", "Output resolution", "Output resolution");
+        put("Texture detail", "Texture detail", "Texture detail", "Texture detail", "Detalhe das texturas", "Texture detail", "Texture detail", "Texture detail", "Texture detail");
+        put("FPS limit", "FPS limit", "FPS limit", "FPS limit", "Limite de FPS", "FPS limit", "FPS limit", "FPS limit", "FPS limit");
+        put("Game default", "Game default", "Game default", "Game default", "Padrão do jogo", "Game default", "Game default", "Game default", "Game default");
+        put("Home screen shortcut", "Home screen shortcut", "Home screen shortcut", "Home screen shortcut", "Atalho na tela inicial", "Home screen shortcut", "Home screen shortcut", "Home screen shortcut", "Home screen shortcut");
+        put("Game setup", "Game setup", "Game setup", "Game setup", "Preparação", "Game setup", "Game setup", "Game setup", "Game setup");
+        put("Game preferences", "Game preferences", "Game preferences", "Game preferences", "Preferências", "Game preferences", "Game preferences", "Game preferences", "Game preferences");
+        put("Display and performance", "Display and performance", "Display and performance", "Display and performance", "Imagem e desempenho", "Display and performance", "Display and performance", "Display and performance", "Display and performance");
+        put("Controls", "Controls", "Controls", "Controls", "Controles", "Controls", "Controls", "Controls", "Controls");
+        put("Files and support", "Files and support", "Files and support", "Files and support", "Arquivos e suporte", "Files and support", "Files and support", "Files and support", "Files and support");
         // Options
         put("Text and subtitle language", "Langue des textes et sous-titres", "Sprache für Texte und Untertitel",
                 "Lingua di testi e sottotitoli", "Idioma dos textos e legendas", "テキストと字幕の言語", "텍스트 및 자막 언어",

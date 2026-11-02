@@ -54,6 +54,7 @@ public class ControlsEditor extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        P4gTheme.apply(this);
         Map<String, String> config = Launcher.readConfig(configFile());
         try {
             sizeScale = Math.max(50, Math.min(160, Integer.parseInt(config.get("NX_TOUCH_SIZE")))) / 100f;
@@ -63,7 +64,7 @@ public class ControlsEditor extends Activity {
         parse(config.get("NX_TOUCH_LAYOUT"));
 
         FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.rgb(20, 4, 6));
+        root.setBackgroundColor(P4gTheme.BACKGROUND);
         view = new EditorView(this);
         root.addView(view, new FrameLayout.LayoutParams(-1, -1));
 
@@ -73,7 +74,7 @@ public class ControlsEditor extends Activity {
         TextView help = new TextView(this);
         help.setText(t("Arrastra los controles a donde quieras.\nLa cruceta y A B X Y se mueven juntos. En rojo: se tocan.",
                 "Drag the controls where you want them.\nThe d-pad and A B X Y move together. Red: they touch."));
-        help.setTextColor(Color.rgb(230, 230, 230));
+        help.setTextColor(P4gTheme.TEXT);
         help.setTextSize(15);
         help.setGravity(Gravity.CENTER);
         middle.addView(help);
@@ -82,7 +83,7 @@ public class ControlsEditor extends Activity {
         bar.setPadding(0, dp(12), 0, 0);
         Button restore = button(t("Restablecer", "Reset"), Color.rgb(70, 70, 70));
         Button cancel = button(t("Cancelar", "Cancel"), Color.rgb(70, 70, 70));
-        Button save = button(t("Guardar", "Save"), Color.rgb(230, 0, 18));
+        Button save = button(t("Guardar", "Save"), P4gTheme.YELLOW);
         restore.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -137,8 +138,7 @@ public class ControlsEditor extends Activity {
         Button b = new Button(this);
         b.setText(text);
         b.setAllCaps(false);
-        b.setTextColor(Color.WHITE);
-        b.setBackgroundColor(color);
+        P4gTheme.button(b, color == P4gTheme.YELLOW);
         b.setMinWidth(dp(120));
         return b;
     }
@@ -205,11 +205,11 @@ public class ControlsEditor extends Activity {
                 float cx = pos[i][0] * w, cy = pos[i][1] * h, r = radius(i);
                 boolean bad = touches(i), held = GROUP[i] == group;
                 paint.setStyle(Paint.Style.FILL);
-                paint.setColor(bad ? Color.argb(150, 230, 0, 18) : Color.argb(held ? 140 : 80, 255, 255, 255));
+                paint.setColor(bad ? Color.argb(150, 230, 0, 18) : Color.argb(held ? 150 : 65, 255, 224, 0));
                 c.drawCircle(cx, cy, r, paint);
                 paint.setStyle(Paint.Style.STROKE);
                 paint.setStrokeWidth(dp(2));
-                paint.setColor(bad ? Color.rgb(255, 60, 60) : Color.argb(220, 255, 255, 255));
+                paint.setColor(bad ? Color.rgb(255, 60, 60) : P4gTheme.YELLOW);
                 c.drawCircle(cx, cy, r, paint);
                 paint.setStyle(Paint.Style.FILL);
                 paint.setColor(Color.WHITE);
