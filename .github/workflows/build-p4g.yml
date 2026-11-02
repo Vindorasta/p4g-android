@@ -331,14 +331,26 @@ jobs:
           records = [line.split("\t") for line in manifest.read_text().splitlines() if line.strip()]
           if not records:
               raise RuntimeError("Bundled shader pack is empty")
+          if not any(row[0] == "results.tsv" for row in records):
+              raise RuntimeError("Bundled shader resources metadata results.tsv is missing")
           for name, digest, length in records:
-              if not re.fullmatch(r"[0-9a-f]{16}\.spv", name):
+              if not re.fullmatch(r"(?:[0-9a-f]{16}\.spv|results\.tsv)", name):
                   raise RuntimeError("Invalid bundled shader name")
               source = shader_root / name
               data = source.read_bytes()
               if len(data) != int(length) or hashlib.sha256(data).hexdigest() != digest:
                   raise RuntimeError(f"Bundled shader hash mismatch: {name}")
-              if len(data) < 20 or len(data) % 4 or data[:4] != bytes.fromhex("03022307"):
+              if name == "results.tsv":
+                  lines = data.decode("utf-8").splitlines()
+                  header = lines[0].split("\t") if lines else []
+                  if not header or header[0] != "hash" or "resources" not in header:
+                      raise RuntimeError("Invalid results.tsv header")
+                  column = header.index("resources")
+                  rows = [line.split("\t") for line in lines[1:]]
+                  if not any(len(row) > column and re.fullmatch(r"[0-9a-f]{16}", row[0])
+                             and row[column] for row in rows):
+                      raise RuntimeError("results.tsv has no resource mappings")
+              elif len(data) < 20 or len(data) % 4 or data[:4] != bytes.fromhex("03022307"):
                   raise RuntimeError(f"Invalid SPIR-V header: {name}")
               files[f"assets/spirv/{name}"] = str(source)
           files["assets/spirv/manifest.tsv"] = str(manifest)
