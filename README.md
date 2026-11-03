@@ -6,6 +6,7 @@ P4G is an unofficial Android port of the Nintendo Switch version of **Persona 4 
 
 Game preparation runs directly on the phone. Select your own game dump and keys, prepare the game, and launch it from the main menu.
 
+Discord:https://discord.gg/yF6FtNK6rM
 [Downloads](https://github.com/nxdevxz/p4g-android/releases) · [Builds](https://github.com/nxdevxz/p4g-android/actions/workflows/build-p4g.yml) · [Report an issue](https://github.com/nxdevxz/p4g-android/issues)
 
 ## Current status
