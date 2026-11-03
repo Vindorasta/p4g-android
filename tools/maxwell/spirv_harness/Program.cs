@@ -38,7 +38,7 @@ namespace SpirvHarness
         public string Queries = "";
     }
 
-    static class Program
+    static partial class Program
     {
         const uint ComputeMagic = 0x12345679;
         static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
@@ -52,6 +52,7 @@ namespace SpirvHarness
 
         public static int Run(string[] args)
         {
+            if (args.Length == 2 && args[0] == "--test-local") return TestLocal(args[1]);
             NoRetry = args.Contains("--no-retry");
             Debug = args.Contains("--debug-mode");
             try
