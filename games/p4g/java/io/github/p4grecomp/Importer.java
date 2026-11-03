@@ -2,8 +2,7 @@
 package io.github.p4grecomp;
 
 /**
- * Importador de Persona 4 Golden para Android.
- * A biblioteca JNI ainda precisa ser adaptada.
+ * Prepares a local Maxwell shader cache from the player's game.
  */
 final class Importer {
     static {

@@ -4,81 +4,54 @@ import java.io.*;
 import java.util.HashSet;
 import java.util.Set;
 
-/** File checks shared by launcher routing and host-side regression tests. */
+/** Readiness of the locally generated Maxwell cache. No APK asset manifest is used. */
 final class PreparationFiles {
+    static final String FORMAT = "format\tmaxwell-local-v1-a82350bb77";
+    static String failure(File runtime) {
+        try (Reader r = new InputStreamReader(new FileInputStream(new File(runtime, "failed.txt")), "UTF-8")) {
+            char[] text = new char[2048];
+            int n = r.read(text);
+            return n > 0 ? new String(text, 0, n).trim() : "Shader generation failed.";
+        } catch (IOException e) { return ""; }
+    }
     static boolean spirv(File f) throws IOException {
-        if (!f.isFile() || f.length() < 20 || f.length() % 4 != 0) return false;
-        try (DataInputStream in = new DataInputStream(new FileInputStream(f))) {
-            return in.readInt() == 0x03022307;
+        if (!f.isFile() || f.length() < 20 || f.length() > 32L * 1024 * 1024 || f.length() % 4 != 0) return false;
+        try (DataInputStream in = new DataInputStream(new BufferedInputStream(new FileInputStream(f)))) {
+            if (in.readInt() != 0x03022307) return false;
+            in.readInt(); in.readInt();
+            if (in.readInt() == 0 || in.readInt() != 0) return false;
+            long left = f.length() / 4 - 5;
+            while (left > 0) {
+                int word = Integer.reverseBytes(in.readInt()), count = word >>> 16;
+                if (count == 0 || count > left) return false;
+                for (int i = 1; i < count; ++i) in.readInt();
+                left -= count;
+            }
+            return true;
         }
     }
-    static int converted(File dir) throws IOException {
-        File[] files = dir.listFiles();
-        if (files == null) return -1;
-        int count = 0;
-        for (File f : files) {
-            if (f.isDirectory()) {
-                int n = converted(f);
-                if (n < 0) return -1;
-                count += n;
-            } else if (f.getName().endsWith(".spv")) {
-                if (!spirv(f)) return -1;
-                ++count;
-            }
-        }
-        return count;
+    static boolean module(File dir, String hash) throws IOException {
+        return hash.matches("[0-9a-f]{16}") && spirv(new File(dir, hash + ".spv")) &&
+                new File(dir, hash + ".resources").isFile();
     }
-    static boolean results(File file) throws IOException {
-        if (!file.isFile()) return false;
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(file), "UTF-8"))) {
-            String line = r.readLine();
-            if (line == null) return false;
-            String[] header = line.split("\t", -1);
-            if (!"hash".equals(header[0])) return false;
-            int resources = -1;
-            for (int i = 0; i < header.length; ++i) if ("resources".equals(header[i])) resources = i;
-            if (resources < 0) return false;
-            while ((line = r.readLine()) != null) {
-                String[] row = line.split("\t", -1);
-                if (row.length > resources && row[0].matches("[0-9a-f]{16}") && !row[resources].isEmpty()) return true;
+    static boolean ready(File runtime) throws IOException {
+        File marker = new File(runtime, "prepared.tsv");
+        if (!marker.isFile() || new File(runtime, "failed.txt").exists()) return false;
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(marker), "UTF-8"))) {
+            if (!FORMAT.equals(r.readLine())) return false;
+            Set<String> seeds = new HashSet<>();
+            for (String line; (line = r.readLine()) != null;) {
+                String[] fields = line.split("\t", -1);
+                if (fields.length != 2 || !"seed".equals(fields[0]) || !seeds.add(fields[1]) ||
+                        !module(runtime, fields[1])) return false;
             }
-            return false;
         }
-    }
-    static boolean ready(File converted, File runtime, InputStream manifest) throws IOException {
-        try (BufferedReader pack = new BufferedReader(new InputStreamReader(manifest, "UTF-8"))) {
-            int total = -1, success = -1, failed = -1;
-            File summary = new File(converted, "summary.tsv");
-            if (!summary.isFile()) return false;
-            try (BufferedReader r = new BufferedReader(new FileReader(summary))) {
-                for (String line; (line = r.readLine()) != null;) {
-                    String[] fields = line.split("\t", -1);
-                    if (fields.length != 2) continue;
-                    try {
-                        int n = Integer.parseInt(fields[1]);
-                        if ("total".equals(fields[0])) total = n;
-                        if ("sucesso".equals(fields[0])) success = n;
-                        if ("falhas".equals(fields[0])) failed = n;
-                    } catch (NumberFormatException e) { return false; }
-                }
-            }
-            if (total <= 0 || success != total || failed != 0 || converted(converted) != total) return false;
-            Set<String> names = new HashSet<>();
-            int shaders = 0;
-            boolean metadata = false;
-            for (String line; (line = pack.readLine()) != null;) {
-                if (line.trim().isEmpty()) continue;
-                String[] row = line.split("\t", -1);
-                if (row.length != 3 || !names.add(row[0])) return false;
-                if (row[0].matches("[0-9a-f]{16}\\.spv")) {
-                    if (!spirv(new File(runtime, row[0]))) return false;
-                    ++shaders;
-                } else if ("results.tsv".equals(row[0])) {
-                    if (!results(new File(runtime, row[0]))) return false;
-                    metadata = true;
-                } else return false;
-            }
-            return shaders > 0 && metadata;
+        File[] files = runtime.listFiles();
+        if (files == null) return false;
+        for (File f : files) if (f.getName().endsWith(".spv")) {
+            String name = f.getName();
+            if (!module(runtime, name.substring(0, name.length() - 4))) return false;
         }
+        return true; // A valid, probed compiler may have zero ExeFS seeds.
     }
 }

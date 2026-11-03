@@ -13,7 +13,7 @@ public class AppFlowTest {
     }
     static void text(File file, String text) throws IOException { bytes(file, text.getBytes("UTF-8")); }
     static byte[] spv() {
-        byte[] b = new byte[20]; b[0] = 3; b[1] = 2; b[2] = 35; b[3] = 7; return b;
+        byte[] b = new byte[20]; b[0] = 3; b[1] = 2; b[2] = 35; b[3] = 7; b[12] = 1; return b;
     }
     static File zip(File dir, String name, String... paths) throws IOException {
         File out = new File(dir, name);
@@ -25,10 +25,6 @@ public class AppFlowTest {
             }
         }
         return out;
-    }
-    static boolean ready(File converted, File runtime) throws IOException {
-        return PreparationFiles.ready(converted, runtime, new ByteArrayInputStream(
-            ("0123456789abcdef.spv\tunused\t20\nresults.tsv\tunused\t50\n").getBytes("UTF-8")));
     }
     public static void main(String[] args) throws Exception {
         File temp = Files.createTempDirectory("p4g-flow-test").toFile();
@@ -82,19 +78,27 @@ public class AppFlowTest {
             check(Arrays.equals(before, Files.readAllBytes(existing.toPath())));
         } finally { System.clearProperty("p4g.test.fail-file"); }
 
-        File converted = new File(temp, "converted"), runtime = new File(temp, "spirv");
-        File summary = new File(converted, "summary.tsv"), module = new File(converted, "pack/000000.spv");
-        File packed = new File(runtime, "0123456789abcdef.spv"), results = new File(runtime, "results.tsv");
-        text(summary, "total\t1\nsucesso\t1\nfalhas\t0\n");
-        bytes(module, spv()); bytes(packed, spv());
-        text(results, "hash\tresources\n0123456789abcdef\tubo:0\n");
-        check(ready(converted, runtime));
-        Files.delete(packed.toPath()); check(!ready(converted, runtime));
-        bytes(packed, spv()); text(results, "broken"); check(!ready(converted, runtime));
-        text(results, "hash\tresources\n0123456789abcdef\tubo:0\n");
-        bytes(module, new byte[20]); check(!ready(converted, runtime));
-        bytes(module, spv()); text(summary, "total\t2\nsucesso\t2\nfalhas\t0\n"); check(!ready(converted, runtime));
-        text(summary, "total\t1\nsucesso\t0\nfalhas\t1\n"); check(!ready(converted, runtime));
+        File runtime = new File(temp, "spirv");
+        File marker = new File(runtime, "prepared.tsv");
+        File packed = new File(runtime, "0123456789abcdef.spv");
+        File metadata = new File(runtime, "0123456789abcdef.resources");
+        // Old copied packs are never considered locally prepared.
+        bytes(packed, spv()); text(metadata, "cb0=s0b1");
+        check(!PreparationFiles.ready(runtime));
+        text(marker, PreparationFiles.FORMAT + "\nseed\t0123456789abcdef\n");
+        check(PreparationFiles.ready(runtime));
+        Files.delete(packed.toPath()); check(!PreparationFiles.ready(runtime));
+        bytes(packed, spv()); Files.delete(metadata.toPath()); check(!PreparationFiles.ready(runtime));
+        text(metadata, ""); check(PreparationFiles.ready(runtime)); // no resources is legitimate
+        bytes(packed, new byte[20]); check(!PreparationFiles.ready(runtime));
+        bytes(packed, spv()); text(new File(runtime, "failed.txt"), "translation error");
+        check("translation error".equals(PreparationFiles.failure(runtime)));
+        check(!PreparationFiles.ready(runtime)); Files.delete(new File(runtime, "failed.txt").toPath());
+        text(marker, "format\told-cache\n"); check(!PreparationFiles.ready(runtime));
+        text(marker, PreparationFiles.FORMAT + "\n"); check(PreparationFiles.ready(runtime));
+        // Invalid newly encountered modules are detected even without a seed entry.
+        bytes(new File(runtime, "fedcba9876543210.spv"), new byte[20]);
+        check(!PreparationFiles.ready(runtime));
         System.out.println("PASS: actual ZIP/folder import, backup, round trip, rollback, save paths and preparation readiness");
     }
 }

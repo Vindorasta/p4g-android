@@ -1,858 +1,127 @@
-
-#include <dirent.h>
-#include <dlfcn.h>
-#include <fcntl.h>
 #include <jni.h>
-#include <sys/stat.h>
+#include <fcntl.h>
 #include <unistd.h>
-
 #include <atomic>
-#include <cerrno>
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
+#include <chrono>
+#include <filesystem>
 #include <fstream>
-#include <limits>
 #include <mutex>
+#include <set>
+#include <stdexcept>
 #include <string>
-#include <vector>
-
 #include "nxgame.h"
-#include "p4g_shaders.h"
-
-// Persona 4 Golden Android
-// Etapa 62.09 - conversao em lote GXP -> SPIR-V.
-//
-// Fases:
-// 0 = parado ou erro
-// 1 = abrindo jogo
-// 2 = extraindo GXP
-// 3 = traduzindo GXP para SPIR-V
-// 4 = gravando relatorio
-// 5 = preparacao concluida
-//
-// A fase 5 indica somente que a preparacao
-// de shaders foi concluida, nao que o jogo
-// ja pode ser executado.
+#include "p4g_maxwell.h"
+#include "nvn_local_shader.h"
+#include "nvn_shaders.h"
 
 namespace {
-
-constexpr uint64_t P4G_TITLE_ID =
-    0x010062B01525C000ull;
-
-constexpr int SHADER_API_VERSION = 2;
-
-constexpr size_t MAX_GXP_SIZE =
-    32u * 1024u * 1024u;
-
-constexpr uint64_t MAX_SPIRV_SIZE =
-    32ull * 1024ull * 1024ull;
-
-std::atomic<int> g_phase{0};
-std::atomic<int> g_done{0};
-std::atomic<int> g_total{0};
-
-std::mutex g_error_lock;
-std::string g_error;
-
-using ShaderVersion = int (*)();
-
-using ShaderConvert = int (*)(
-    const void*,
-    size_t,
-    const char*
-);
-
-struct ShaderLibrary {
-    void* handle = nullptr;
-    ShaderVersion version = nullptr;
-    ShaderConvert convert = nullptr;
-
-    ~ShaderLibrary() {
-        if (handle) {
-            dlclose(handle);
-        }
-    }
-
-    ShaderLibrary() = default;
-    ShaderLibrary(const ShaderLibrary&) = delete;
-    ShaderLibrary& operator=(const ShaderLibrary&) = delete;
-};
-
-struct GxpEntry {
-    std::string pack;
-    std::string name;
-    uint64_t offset = 0;
-    uint64_t size = 0;
-    size_t index = 0;
-};
-
-void set_message(const std::string& message) {
-    std::lock_guard<std::mutex> lock(g_error_lock);
-    g_error = message;
+std::atomic<int> phase{0}, done{0}, total{0};
+std::mutex message_lock, run_lock;
+std::string message;
+void set_message(const std::string& text) { std::lock_guard guard(message_lock); message = text; }
+int fail(const std::string& text) { set_message(text); phase = 0; return 1; }
+std::string jstr(JNIEnv* env, jstring text) {
+    if (!text) return {};
+    const char* p = env->GetStringUTFChars(text, nullptr);
+    if (!p) return {};
+    std::string s(p); env->ReleaseStringUTFChars(text, p); return s;
 }
-
-int fail(const std::string& message) {
-    set_message(message);
-    g_phase = 0;
-    return 1;
+bool write(const std::filesystem::path& path, const std::string& text) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f << text; f.flush(); return bool(f);
 }
-
-std::string jstr(JNIEnv* env, jstring value) {
-    if (!value) {
-        return {};
-    }
-
-    const char* chars =
-        env->GetStringUTFChars(value, nullptr);
-
-    if (!chars) {
-        return {};
-    }
-
-    std::string result(chars);
-    env->ReleaseStringUTFChars(value, chars);
-    return result;
-}
-
-bool is_supported_title(uint64_t title_id) {
-    return (title_id & ~0xFFFull) == P4G_TITLE_ID;
-}
-
-void remove_tree(const std::string& path) {
-    struct stat st{};
-
-    if (lstat(path.c_str(), &st) != 0) {
-        return;
-    }
-
-    if (!S_ISDIR(st.st_mode)) {
-        unlink(path.c_str());
-        return;
-    }
-
-    DIR* directory = opendir(path.c_str());
-
-    if (!directory) {
-        return;
-    }
-
-    while (dirent* entry = readdir(directory)) {
-        const std::string name = entry->d_name;
-
-        if (name == "." || name == "..") {
-            continue;
-        }
-
-        remove_tree(path + "/" + name);
-    }
-
-    closedir(directory);
-    rmdir(path.c_str());
-}
-
-bool make_directory(const std::string& path) {
-    if (path.empty() || path[0] != '/') {
-        return false;
-    }
-
-    for (size_t i = 1; i <= path.size(); ++i) {
-        if (i != path.size() && path[i] != '/') {
-            continue;
-        }
-
-        const std::string part = path.substr(0, i);
-
-        if (part.empty()) {
-            continue;
-        }
-
-        if (mkdir(part.c_str(), 0700) != 0 &&
-            errno != EEXIST) {
-            return false;
-        }
-
-        struct stat st{};
-
-        if (stat(part.c_str(), &st) != 0 ||
-            !S_ISDIR(st.st_mode)) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool load_shader_library(
-    ShaderLibrary& library,
-    std::string& error
-) {
-    library.handle = dlopen(
-        "libp4gshader.so",
-        RTLD_NOW | RTLD_LOCAL
-    );
-
-    if (!library.handle) {
-        const char* detail = dlerror();
-
-        error = "P4G: could not load libp4gshader.so: ";
-        error += detail ? detail : "desconhecido";
-        return false;
-    }
-
-    dlerror();
-
-    library.version = reinterpret_cast<ShaderVersion>(
-        dlsym(library.handle, "p4g_shader_api_version")
-    );
-
-    const char* version_error = dlerror();
-
-    if (version_error || !library.version) {
-        error = "P4G: missing p4g_shader_api_version";
-        return false;
-    }
-
-    const int version = library.version();
-
-    if (version != SHADER_API_VERSION) {
-        error = "P4G: incompatible shader API: ";
-        error += std::to_string(version);
-        error += " (expected: 2)";
-        return false;
-    }
-
-    dlerror();
-
-    library.convert = reinterpret_cast<ShaderConvert>(
-        dlsym(library.handle, "p4g_shader_convert")
-    );
-
-    const char* convert_error = dlerror();
-
-    if (convert_error || !library.convert) {
-        error = "P4G: missing p4g_shader_convert";
-        return false;
-    }
-
-    return true;
-}
-
-bool parse_unsigned(
-    const std::string& text,
-    uint64_t& value
-) {
-    if (text.empty()) {
-        return false;
-    }
-
-    for (char c : text) {
-        if (c < '0' || c > '9') {
-            return false;
-        }
-    }
-
+int run(int fd, const std::string& name, const std::string& keys, const std::string& title_keys,
+        const std::string& data_dir) {
+    std::unique_lock guard(run_lock, std::try_to_lock);
+    if (!guard.owns_lock()) return 1;
+    phase = 1; done = 0; total = 0; set_message("");
+    namespace fs = std::filesystem;
+    fs::path staging;
     try {
-        size_t consumed = 0;
-
-        value = std::stoull(text, &consumed, 10);
-
-        return consumed == text.size();
-    } catch (...) {
-        return false;
-    }
-}
-
-bool read_pack_index(
-    const std::string& dir,
-    const std::string& pack,
-    std::vector<GxpEntry>& entries,
-    std::string& error
-) {
-    std::ifstream file(dir + "/" + pack + ".tsv");
-
-    if (!file) {
-        error = "P4G: missing index: " + pack;
-        return false;
-    }
-
-    std::string line;
-
-    if (!std::getline(file, line) ||
-        line != "nome\toffset\ttamanho") {
-        error = "P4G: invalid TSV header: " + pack;
-        return false;
-    }
-
-    size_t index = 0;
-
-    while (std::getline(file, line)) {
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-
-        if (line.empty()) {
-            continue;
-        }
-
-        const size_t a = line.find('\t');
-
-        const size_t b = a == std::string::npos
-            ? std::string::npos
-            : line.find('\t', a + 1);
-
-        if (a == std::string::npos ||
-            b == std::string::npos ||
-            line.find('\t', b + 1) != std::string::npos) {
-            error = "P4G: invalid TSV line in " + pack;
-            return false;
-        }
-
-        GxpEntry entry;
-
-        entry.pack = pack;
-        entry.name = line.substr(0, a);
-        entry.index = index++;
-
-        if (entry.name.empty() ||
-            !parse_unsigned(
-                line.substr(a + 1, b - a - 1),
-                entry.offset
-            ) ||
-            !parse_unsigned(
-                line.substr(b + 1),
-                entry.size
-            ) ||
-            entry.size == 0 ||
-            entry.size > MAX_GXP_SIZE) {
-            error = "P4G: invalid TSV record in " + pack;
-            return false;
-        }
-
-        entries.push_back(std::move(entry));
-    }
-
-    if (!file.eof() && file.fail()) {
-        error = "P4G: could not read index " + pack;
-        return false;
-    }
-
-    return true;
-}
-
-bool read_gxp(
-    const std::string& dir,
-    const GxpEntry& entry,
-    std::vector<uint8_t>& bytes
-) {
-    std::ifstream file(
-        dir + "/" + entry.pack,
-        std::ios::binary | std::ios::ate
-    );
-
-    if (!file) {
-        return false;
-    }
-
-    const std::streampos end = file.tellg();
-
-    if (end < 0) {
-        return false;
-    }
-
-    const uint64_t file_size =
-        static_cast<uint64_t>(end);
-
-    if (entry.offset > file_size ||
-        entry.size > file_size - entry.offset ||
-        entry.size >
-            static_cast<uint64_t>(
-                std::numeric_limits<std::streamsize>::max()
-            ) ||
-        entry.offset >
-            static_cast<uint64_t>(
-                std::numeric_limits<std::streamoff>::max()
-            )) {
-        return false;
-    }
-
-    bytes.resize(static_cast<size_t>(entry.size));
-
-    file.seekg(
-        static_cast<std::streamoff>(entry.offset),
-        std::ios::beg
-    );
-
-    if (!file) {
-        return false;
-    }
-
-    return static_cast<bool>(
-        file.read(
-            reinterpret_cast<char*>(bytes.data()),
-            static_cast<std::streamsize>(bytes.size())
-        )
-    );
-}
-
-uint32_t read_u32(const uint8_t* p) {
-    return uint32_t(p[0]) |
-           (uint32_t(p[1]) << 8) |
-           (uint32_t(p[2]) << 16) |
-           (uint32_t(p[3]) << 24);
-}
-
-bool verify_spirv(const std::string& path) {
-    struct stat st{};
-
-    if (stat(path.c_str(), &st) != 0 ||
-        !S_ISREG(st.st_mode) ||
-        st.st_size < 24 ||
-        static_cast<uint64_t>(st.st_size) >
-            MAX_SPIRV_SIZE ||
-        (st.st_size % 4) != 0) {
-        return false;
-    }
-
-    std::ifstream file(path, std::ios::binary);
-
-    if (!file) {
-        return false;
-    }
-
-    std::vector<uint8_t> bytes(
-        static_cast<size_t>(st.st_size)
-    );
-
-    if (!file.read(
-            reinterpret_cast<char*>(bytes.data()),
-            static_cast<std::streamsize>(bytes.size())
-        )) {
-        return false;
-    }
-
-    if (read_u32(bytes.data()) != 0x07230203u ||
-        read_u32(bytes.data() + 12) == 0 ||
-        read_u32(bytes.data() + 16) != 0) {
-        return false;
-    }
-
-    const size_t words = bytes.size() / 4;
-
-    size_t pos = 5;
-
-    while (pos < words) {
-        const uint32_t instruction =
-            read_u32(bytes.data() + pos * 4);
-
-        const size_t count = instruction >> 16;
-
-        if (count == 0 || count > words - pos) {
-            return false;
-        }
-
-        pos += count;
-    }
-
-    return pos == words;
-}
-
-bool write_report(
-    const std::string& path,
-    const std::string& contents
-) {
-    const std::string temporary = path + ".tmp";
-
-    FILE* file = std::fopen(temporary.c_str(), "wb");
-
-    if (!file) {
-        return false;
-    }
-
-    const bool ok =
-        std::fwrite(
-            contents.data(),
-            1,
-            contents.size(),
-            file
-        ) == contents.size();
-
-    const bool closed = std::fclose(file) == 0;
-
-    if (!ok || !closed ||
-        std::rename(
-            temporary.c_str(),
-            path.c_str()
-        ) != 0) {
-        std::remove(temporary.c_str());
-        return false;
-    }
-
-    return true;
-}
-
-int run(
-    int nsp_fd,
-    const std::string& nsp_name,
-    const std::string& keys,
-    const std::string& title_keys,
-    const std::string& data_dir,
-    const std::string& work_dir,
-    int jobs
-) {
-    (void)data_dir;
-    (void)jobs;
-
-    g_phase = 1;
-    g_done = 0;
-    g_total = 0;
-    set_message("");
-
-    if (nsp_fd < 0) {
-        return fail("P4G: invalid game file");
-    }
-
-    std::vector<nxi::InputFile> inputs;
-
-    inputs.push_back({nsp_name, nsp_fd});
-
-    const int keys_fd = open(
-        keys.c_str(),
-        O_RDONLY | O_CLOEXEC
-    );
-
-    if (keys_fd < 0) {
-        return fail("P4G: prod.keys not found");
-    }
-
-    inputs.push_back({"prod.keys", keys_fd});
-
-    const int title_fd = title_keys.empty()
-        ? -1
-        : open(
-            title_keys.c_str(),
-            O_RDONLY | O_CLOEXEC
-        );
-
-    if (title_fd >= 0) {
-        inputs.push_back({"title.keys", title_fd});
-    }
-
-    std::string error;
-
-    auto game = nxi::GameImage::open(inputs, 0, error);
-
-    close(keys_fd);
-
-    if (title_fd >= 0) {
-        close(title_fd);
-    }
-
-    if (!game) {
-        return fail(
-            error.empty()
-                ? "P4G: could not open the game"
-                : error
-        );
-    }
-
-    if (!is_supported_title(game->title_id())) {
-        return fail("P4G: Title ID does not match the game");
-    }
-
-    const auto main_it = game->exefs().find("main");
-
-    if (main_it == game->exefs().end() ||
-        main_it->second.size() < 0x48) {
-        return fail("P4G: invalid main executable");
-    }
-
-    if (work_dir.empty() ||
-        work_dir[0] != '/' ||
-        work_dir == "/" ||
-        work_dir == "." ||
-        work_dir == ".." ||
-        work_dir.find("/../") != std::string::npos ||
-        work_dir.find("/./") != std::string::npos ||
-        work_dir.size() >= 3 &&
-            work_dir.compare(
-                work_dir.size() - 3,
-                3,
-                "/.."
-            ) == 0) {
-        return fail("P4G: invalid working directory");
-    }
-
-    // ETAPA 2 - Extrair os programas GXP.
-
-    g_phase = 2;
-
-    remove_tree(work_dir);
-
-    if (!make_directory(work_dir)) {
-        return fail("P4G: could not create working directory");
-    }
-
-    const std::string extracted =
-        work_dir + "/shaders";
-
-    const long blocks = p4g::extract_shaders(
-        *game,
-        extracted,
-        [](int done, int total) {
-            g_done = done;
-            g_total = total;
-        },
-        error
-    );
-
-    if (blocks <= 0) {
-        return fail(
-            error.empty()
-                ? "P4G: no GXP extracted"
-                : error
-        );
-    }
-
-    // ETAPA 3 - Carregar o recompilador.
-
-    ShaderLibrary shader;
-
-    if (!load_shader_library(shader, error)) {
-        return fail(error);
-    }
-
-    const std::string source_dir =
-        extracted + "/p4g_gxp";
-
-    const std::string output_dir =
-        work_dir + "/spirv";
-
-    if (!make_directory(output_dir)) {
-        return fail("P4G: could not create SPIR-V folder");
-    }
-
-    const char* packs[] = {
-        "output_cnv_v_standard.bin",
-        "output_cnv_f_standard.bin",
-        "output_cnv_v_effect.bin",
-        "output_cnv_f_effect.bin",
-        "output_cnv_v_sprite.bin",
-        "output_cnv_f_sprite.bin"
-    };
-
-    std::vector<GxpEntry> entries;
-
-    for (const char* pack : packs) {
-        if (!read_pack_index(
-                source_dir,
-                pack,
-                entries,
-                error
-            )) {
-            return fail(error);
-        }
-    }
-
-    if (entries.size() != static_cast<size_t>(blocks) ||
-        entries.size() >
-            static_cast<size_t>(
-                std::numeric_limits<int>::max()
-            )) {
-        return fail(
-            "P4G: GXP indices do not match "
-            "the extracted count"
-        );
-    }
-
-    g_phase = 3;
-    g_done = 0;
-    g_total = static_cast<int>(entries.size());
-
-    int success = 0;
-    int failed = 0;
-
-    std::string report =
-        "pacote\tindice\tnome\tresultado\tcodigo\n";
-
-    std::string current_pack;
-    std::string pack_output;
-
-    for (const GxpEntry& entry : entries) {
-        if (current_pack != entry.pack) {
-            current_pack = entry.pack;
-            pack_output = output_dir + "/" + entry.pack;
-
-            if (!make_directory(pack_output)) {
-                return fail(
-                    "P4G: could not create SPIR-V folder "
-                    "for " + entry.pack
-                );
+        if (fd < 0) return fail("Invalid game file");
+        fs::path root(data_dir);
+        if (!root.is_absolute() || root == root.root_path() || root.lexically_normal() != root)
+            return fail("Invalid data directory");
+        std::vector<nxi::InputFile> inputs{{name, fd}};
+        int k = open(keys.c_str(), O_RDONLY | O_CLOEXEC);
+        if (k < 0) return fail("prod.keys not found");
+        inputs.push_back({"prod.keys", k});
+        int t = title_keys.empty() ? -1 : open(title_keys.c_str(), O_RDONLY | O_CLOEXEC);
+        if (t >= 0) inputs.push_back({"title.keys", t});
+        std::string error;
+        auto game = nxi::GameImage::open(inputs, 0, error);
+        close(k); if (t >= 0) close(t);
+        if (!game) return fail(error.empty() ? "Could not open the game" : error);
+        if ((game->title_id() & ~0xfffull) != 0x010062B01525C000ull) return fail("Title ID does not match P4G");
+        if (!game->exefs().count("main")) return fail("The game has no main executable");
+        if (!nx::nvn::local::available(error)) return fail(error);
+
+        fs::create_directories(root);
+        std::string suffix = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+        staging = root / ("spirv-preparing-" + suffix);
+        if (!fs::create_directory(staging)) return fail("Could not create a fresh shader cache");
+        // Probe is compiled on the device, then removed. It is never a bundled game shader.
+        fs::path probe = staging / "compiler-test";
+        if (!nx::nvn::local::probe(probe.string(), error)) throw std::runtime_error(error);
+        fs::remove_all(probe);
+        if (!write(staging / "results.tsv", "hash\tresources\n")) throw std::runtime_error("Cannot write resource table");
+        std::set<std::string> hashes;
+        phase = 2;
+        total = int(game->exefs().size()); done = 0;
+        for (const auto& [module, nso] : game->exefs()) {
+            if (nso.size() < 4 || std::memcmp(nso.data(), "NSO0", 4)) { ++done; continue; }
+            std::vector<uint8_t> flat;
+            if (!nxi::nso_to_flat_image(nso, flat, error)) throw std::runtime_error("Invalid " + module + ": " + error);
+            auto blocks = p4g::maxwell_blocks(flat);
+            phase = 3;
+            for (const auto& block : blocks) {
+                std::string hash = nx::nvn::shader_hash(flat.data() + block.code, block.size);
+                if (!hashes.insert(hash).second) continue;
+                if (!nx::nvn::local::compile(staging.string(), flat.data() + block.code, block.size,
+                        flat.data() + block.control, 0x880, hash, error))
+                    throw std::runtime_error("Shader " + hash + ": " + error);
             }
+            ++done; phase = 2;
         }
-
-        char filename[32];
-
-        std::snprintf(
-            filename,
-            sizeof(filename),
-            "%06zu.spv",
-            entry.index
-        );
-
-        const std::string output_path =
-            pack_output + "/" + filename;
-
-        std::vector<uint8_t> gxp;
-
-        int result = -100;
-
-        if (read_gxp(source_dir, entry, gxp)) {
-            result = shader.convert(
-                gxp.data(),
-                gxp.size(),
-                output_path.c_str()
-            );
-
-            if (result == 0 &&
-                !verify_spirv(output_path)) {
-                result = -101;
-            }
+        phase = 4;
+        std::string marker = std::string("format\t") + nx::nvn::local::kFormat + "\n";
+        for (const auto& hash : hashes) {
+            if (!nx::nvn::local::valid(staging.string(), hash)) throw std::runtime_error("Incomplete generated cache");
+            marker += "seed\t" + hash + "\n";
         }
-
-        if (result == 0) {
-            ++success;
-        } else {
-            ++failed;
-            unlink(output_path.c_str());
+        if (!write(staging / "prepared.tsv", marker)) throw std::runtime_error("Cannot save preparation status");
+        fs::path current = root / "spirv", backup = root / ("spirv-backup-" + suffix);
+        bool had_cache = fs::exists(current);
+        if (had_cache) fs::rename(current, backup);
+        std::error_code commit_error;
+        fs::rename(staging, current, commit_error);
+        if (commit_error) {
+            std::error_code restore_error;
+            if (had_cache) fs::rename(backup, current, restore_error);
+            throw std::runtime_error("Cannot install generated cache. Previous cache kept at " +
+                                     (restore_error ? backup : current).string());
         }
-
-        report += entry.pack;
-        report += "\t";
-        report += std::to_string(entry.index);
-        report += "\t";
-        report += entry.name;
-        report += "\t";
-        report += result == 0 ? "PASS" : "FAIL";
-        report += "\t";
-        report += std::to_string(result);
-        report += "\n";
-
-        g_done.fetch_add(1);
+        staging.clear();
+        phase = 5;
+        set_message("Preparation complete. Additional shaders will be generated on first use.");
+        return 0;
+    } catch (const std::exception& e) {
+        // Only this invocation's private staging directory is removed; saves and old caches stay intact.
+        if (!staging.empty()) { std::error_code ignored; fs::remove_all(staging, ignored); }
+        return fail(e.what());
     }
-
-    // ETAPA 4 - Relatorios.
-
-    g_phase = 4;
-
-    const std::string report_path =
-        output_dir + "/conversion-results.tsv";
-
-    if (!write_report(report_path, report)) {
-        return fail(
-            "P4G: could not save conversion report"
-        );
-    }
-
-    const std::string summary =
-        "total\t" + std::to_string(entries.size()) +
-        "\nsucesso\t" + std::to_string(success) +
-        "\nfalhas\t" + std::to_string(failed) +
-        "\n";
-
-    if (!write_report(
-            output_dir + "/summary.tsv",
-            summary
-        )) {
-        return fail("P4G: could not save SPIR-V summary");
-    }
-
-    if (failed > 0) {
-        return fail(
-            "P4G: partial conversion. " +
-            std::to_string(success) +
-            " GXP converted; " +
-            std::to_string(failed) +
-            " failed. Report: " +
-            report_path
-        );
-    }
-
-    g_done = static_cast<int>(entries.size());
-    g_total = static_cast<int>(entries.size());
-    g_phase = 5;
-
-    set_message(
-        "P4G: " +
-        std::to_string(success) +
-        " GXP programs converted to SPIR-V. "
-        "Basic structural validation complete. "
-        "Game execution has not been implemented."
-    );
-
-    return 0;
 }
-
-} // namespace
-
+}
 extern "C" {
-
-JNIEXPORT jint JNICALL
-Java_io_github_p4grecomp_Importer_run(
-    JNIEnv* env,
-    jclass,
-    jint nsp_fd,
-    jstring nsp_name,
-    jstring keys,
-    jstring title_keys,
-    jstring data_dir,
-    jstring work_dir,
-    jint jobs
-) {
-    return run(
-        nsp_fd,
-        jstr(env, nsp_name),
-        jstr(env, keys),
-        jstr(env, title_keys),
-        jstr(env, data_dir),
-        jstr(env, work_dir),
-        jobs
-    );
+JNIEXPORT jint JNICALL Java_io_github_p4grecomp_Importer_run(JNIEnv* env, jclass, jint fd, jstring name,
+        jstring keys, jstring title_keys, jstring data_dir, jstring, jint) {
+    return run(fd, jstr(env, name), jstr(env, keys), jstr(env, title_keys), jstr(env, data_dir));
 }
-
-JNIEXPORT jintArray JNICALL
-Java_io_github_p4grecomp_Importer_progress(
-    JNIEnv* env,
-    jclass
-) {
-    jint values[3] = {
-        g_phase.load(),
-        g_done.load(),
-        g_total.load()
-    };
-
-    jintArray result = env->NewIntArray(3);
-
-    if (result) {
-        env->SetIntArrayRegion(
-            result,
-            0,
-            3,
-            values
-        );
-    }
-
-    return result;
+JNIEXPORT jintArray JNICALL Java_io_github_p4grecomp_Importer_progress(JNIEnv* env, jclass) {
+    jint values[] = {phase.load(), done.load(), total.load()};
+    auto out = env->NewIntArray(3); if (out) env->SetIntArrayRegion(out, 0, 3, values); return out;
 }
-
-JNIEXPORT jstring JNICALL
-Java_io_github_p4grecomp_Importer_error(
-    JNIEnv* env,
-    jclass
-) {
-    std::lock_guard<std::mutex> lock(g_error_lock);
-
-    return env->NewStringUTF(g_error.c_str());
+JNIEXPORT jstring JNICALL Java_io_github_p4grecomp_Importer_error(JNIEnv* env, jclass) {
+    std::lock_guard guard(message_lock); return env->NewStringUTF(message.c_str());
 }
-
-} // extern "C"
+}

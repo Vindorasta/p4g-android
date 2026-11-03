@@ -96,7 +96,7 @@ public class ImportActivity extends Activity {
         running = true;
 
 
-        status.setText("Opening the game...");
+        status.setText("Opening the game... Additional shaders will be generated on first use and may briefly pause gameplay.");
 
         new Thread(new Runnable() {
             @Override
@@ -121,8 +121,6 @@ public class ImportActivity extends Activity {
                             .availableProcessors()
                     );
 
-                    // Install the runtime hash pack separately from numbered GXP output.
-                    BundledShaders.install(ImportActivity.this);
                     rc = Importer.run(
                         pfd.getFd(),
                         name == null ? "" : name,
@@ -202,12 +200,12 @@ public class ImportActivity extends Activity {
 
                 if (phase == 2) {
                     status.setText(
-                        "Extracting shaders (" +
+                        "Scanning game modules (" +
                         done + " of " + total + ")..."
                     );
                 } else if (phase == 3) {
                     status.setText(
-                        "Processing shaders (" +
+                        "Generating local shaders (module " +
                         done + " of " + total + ")..."
                     );
                 } else if (phase == 4) {

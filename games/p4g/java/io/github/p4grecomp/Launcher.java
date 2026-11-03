@@ -108,8 +108,7 @@ public class Launcher extends Activity {
         String uri = gameUri();
         if (uri == null || !uri.equals(prefs().getString("p4g_prepared_uri", ""))) return false;
         try {
-            return PreparationFiles.ready(new File(getCacheDir(), "import/spirv"),
-                    new File(dataDir(), "spirv"), getAssets().open("spirv/manifest.tsv"));
+            return PreparationFiles.ready(new File(dataDir(), "spirv"));
         } catch (Exception e) { Log.w("P4G-Launch", "Preparation must be repeated", e); return false; }
     }
 
@@ -459,32 +458,10 @@ public class Launcher extends Activity {
     boolean installingShaders;
 
     void installShadersAndPlay() {
-        if (installingShaders) return;
         if (!hasAccess()) { askAccess(); return; }
-        installingShaders = true;
-        play.setEnabled(false);
-        status.setText(t("Instalando shaders incluidos...", "Installing bundled shaders..."));
-        new Thread(new Runnable() {
-            @Override public void run() {
-                String error = null;
-                try { BundledShaders.install(Launcher.this); }
-                catch (Exception e) { error = String.valueOf(e.getMessage()); }
-                final String failure = error;
-                runOnUiThread(new Runnable() {
-                    @Override public void run() {
-                        installingShaders = false;
-                        if (isFinishing() || isDestroyed()) return;
-                        play.setEnabled(true);
-                        if (failure != null) {
-                            refresh();
-                            tell(t("Shaders", "Shaders"), failure);
-                        } else {
-                            launchAfterShaderInstall();
-                        }
-                    }
-                });
-            }
-        }, "P4G-shader-install").start();
+        // Cache readiness was checked off the UI thread by refresh(). Missing stages
+        // are compiled by the renderer on first use, never installed from APK assets.
+        launchAfterShaderInstall();
     }
 
     void launchAfterShaderInstall() {
@@ -507,6 +484,7 @@ public class Launcher extends Activity {
             final boolean readable = access && gameUri() != null && gameReadable();
             final boolean keys = hasKeys();
             final boolean ready = readable && keys && prepared();
+            final String shaderError = access ? PreparationFiles.failure(new File(dataDir(), "spirv")) : "";
             runOnUiThread(() -> {
                 if (generation != refreshGeneration || isFinishing() || isDestroyed()) return;
                 readyForPlay = ready;
@@ -520,14 +498,15 @@ public class Launcher extends Activity {
                 updateButtons(getWindow().getDecorView());
                 play.setEnabled(true);
                 if (ready) {
-                    status.setText(gameName());
+                    status.setText(gameName() + "\nNew effects may briefly pause while their shaders are prepared.");
                     play.setText(t("Jugar", "Play"));
                 } else {
                     String game = gameUri() == null ? "No game selected" : gameName();
                     status.setText(game + "\nprod.keys: " + (keys ? "selected" : "not selected") +
                         (!access ? "\nAllow file access to prepare the game." :
                          !readable && gameUri() != null ? "\nSelect the game file again." :
-                         readable && keys ? "\nPrepare the game to continue." : ""));
+                         readable && keys ? "\nPrepare the game to continue." : "") +
+                        (shaderError.isEmpty() ? "" : "\nShader generation failed:\n" + shaderError));
                     play.setText(!access ? "Allow access" : "Prepare");
                 }
             });
