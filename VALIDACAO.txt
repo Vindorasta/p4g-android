@@ -1,0 +1,24 @@
+Validação local realizada
+
+PASSOU: build gerenciado do tradutor .NET 10, sem avisos/erros.
+PASSOU: tradução local de três programas sintéticos originais (compute,
+        vertex e fragment), arquivos de recursos, controle inválido e limites.
+PASSOU: spirv-val --target-env vulkan1.1 nos três módulos gerados.
+PASSOU: NativeAOT para linux-bionic-arm64, biblioteca compartilhada vinculada.
+        Exportações da API verificadas; segmentos LOAD com alinhamento de 16 KiB.
+        Dependências dinâmicas observadas: libdl.so, libm.so e libc.so.
+PASSOU: novo libp4gimport.so ARM64 compilado e vinculado com símbolos resolvidos.
+PASSOU: compilação Android ARM64 do resolvedor NVN alterado e verificação
+        de sintaxe do teste de descoberta de blocos Maxwell.
+PASSOU: compilação de todas as classes Java contra android.jar API 35.
+PASSOU: importação de saves ZIP/pasta, backup, exportação/reimportação,
+        rollback e verificação do novo cache de preparação.
+PASSOU: execução do empacotador/verificador reais extraídos do workflow com
+        entradas fictícias; o pacote antigo não entra no APK e uma entrada
+        SPIR-V injetada é rejeitada. Isso não é um APK executável do jogo.
+CONFERIDO: apresentação, origem NVN, áudio, limitador de quadros e importador
+           de saves mantêm os mesmos arquivos da base.
+
+Limites: o teste C++ de descoberta será executado pelo workflow no Linux;
+localmente ele foi compilado, sem execução. O workflow completo e o APK
+com o NSP/XCI real ainda precisam de teste. Não foi alegada validação em aparelho.

@@ -284,8 +284,9 @@ endif()
 if(ANDROID AND NX_GAME STREQUAL "p4g")
     add_library(p4gimport SHARED
         games/p4g/import/p4g_import_jni.cpp
-        games/p4g/import/p4g_shaders.cpp
-        games/p4g/import/p4g_cpk.cpp
+        runtime/src/nvn/nvn_local_shader.cpp
+        runtime/src/nvn/nvn_shaders.cpp
+        runtime/src/nvn/nvn_spirv_reflect.cpp
         "${NX_IMPORTER_DIR}/nximport.cpp"
         "${NX_IMPORTER_DIR}/nxcrypto.cpp"
     )
@@ -293,7 +294,11 @@ if(ANDROID AND NX_GAME STREQUAL "p4g")
     target_include_directories(p4gimport PRIVATE
         "${NX_IMPORTER_DIR}"
         games/p4g/import
+        runtime/src/nvn
     )
+    target_compile_definitions(p4gimport PRIVATE NX_SHADERS_STANDALONE)
+    target_sources(${NX_GAME} PRIVATE runtime/src/nvn/nvn_local_shader.cpp)
+    target_compile_definitions(${NX_GAME} PRIVATE NX_LOCAL_SHADERS)
 
     target_compile_options(p4gimport PRIVATE
         -O2

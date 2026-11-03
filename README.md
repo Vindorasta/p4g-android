@@ -17,7 +17,7 @@ A full playthrough and broad device compatibility have **not** been verified. Pe
 ## Features
 
 - On-device preparation from an NSP or XCI game dump.
-- Bundled runtime shader pack, including the required `results.tsv` resource mapping.
+- Local Maxwell-to-SPIR-V generation, including resource mappings. No game shader pack is included in the APK.
 - Automatic preparation checks when opening the app.
 - Separate preparation screen and main menu.
 - English app interface, including preparation and exit confirmation.
@@ -52,7 +52,7 @@ The current runtime targets the base game with Title ID `010062B01525C000` and b
 
 Keep the selected game file available in its original location. The runtime reads it when starting the game.
 
-If preparation data or required shaders are missing or invalid, the app returns to the preparation screen. The bundled runtime shaders are installed automatically; manually copying the `spirv` folder should not be necessary for a normal installation.
+If preparation data or generated shaders are missing or invalid, the app returns to the preparation screen. Preparation scans the game modules and tests the compiler. Additional shaders are generated on first use, which may briefly pause gameplay. Do not manually copy an old shader pack. See [local shader generation](docs/p4g-local-shaders.md) for details.
 
 ### Updating
 
@@ -156,7 +156,7 @@ The workflow builds the native runtime and preparation libraries, compiles the J
 |---|---|
 | `games/p4g/java/` | Launcher, preparation, controls editor and save management. |
 | `games/p4g/import/` | Game preparation and shader-processing components. |
-| `games/p4g/assets/spirv/` | Bundled runtime shaders and resource mapping. |
+| `tools/maxwell/spirv_harness/` | Source-built Maxwell shader compiler used on the device. |
 | `runtime/src/nce/` | Native ARM64 execution. |
 | `runtime/src/nvn/` | NVN-to-Vulkan graphics runtime. |
 | `runtime/src/hle_audio.cpp` | Audio compatibility. |
@@ -169,6 +169,6 @@ This project builds on the compatibility runtime and native port work of its ori
 
 The repository's source-code license is available in [LICENSE](LICENSE). Third-party components retain their respective licenses. Game content, character artwork and trademarks are not covered by the source-code license.
 
-Persona 4 Golden and its associated trademarks belong to their respective rights holders, including ATLUS and SEGA. The launcher icon uses a custom geometric P4G wordmark.
+Persona 4 Golden and related trademarks belong to their respective rights holders, including ATLUS and SEGA. The launcher uses a custom typographic icon.
 
 This is an unofficial fan project and is not affiliated with or endorsed by ATLUS, SEGA or Nintendo. Game dumps and encryption keys are not distributed with this project; users must supply their own.
