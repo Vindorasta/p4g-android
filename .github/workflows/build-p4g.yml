@@ -27,6 +27,8 @@ jobs:
           "$RUNNER_TEMP/nvn-frame-pacing-test"
           c++ -std=c++17 -Wall -Wextra -Werror -I runtime/src tests/android_surface_size_test.cpp -o "$RUNNER_TEMP/android-surface-size-test"
           "$RUNNER_TEMP/android-surface-size-test"
+          c++ -std=c++17 -Wall -Wextra -Werror -I games/p4g/import tests/p4g_maxwell_test.cpp -o "$RUNNER_TEMP/p4g-maxwell-test"
+          "$RUNNER_TEMP/p4g-maxwell-test"
 
       - name: Verify P4G files
         shell: bash
@@ -87,85 +89,18 @@ jobs:
 
           echo "Vulkan Headers ready."
 
-      - name: Download P4G shader ARM64 library
-        uses: actions/download-artifact@v4
+      - name: Set up .NET shader compiler build
+        uses: actions/setup-dotnet@v4
         with:
-          name: p4g-shader-arm64-link-diagnostics
-          run-id: 41317050938
-          github-token: ${{ github.token }}
-          path: build-shader-artifact
+          dotnet-version: '10.0.x'
 
-      - name: Prepare P4G shader runtime
+      - name: Build Maxwell translator from source
         shell: bash
         run: |
           set -euo pipefail
-
-          NDK="$ANDROID_HOME/ndk/28.2.13676358"
-          OUT="build-apk/shader-libs"
-
-          mkdir -p "$OUT"
-
-          echo "Finding Vita3K shader library..."
-
-          mapfile -t shaders < <(
-            find build-shader-artifact \
-              -type f \
-              -name 'libp4gshader.so' \
-              | sort
-          )
-
-          if [ "${#shaders[@]}" -ne 1 ]; then
-            echo "Expected exactly one libp4gshader.so."
-            printf '%s\n' "${shaders[@]}"
-            exit 1
-          fi
-
-          SHADER="${shaders[0]}"
-
-          test -s "$SHADER"
-
-          echo "Checking C++ shared runtime..."
-
-          CPP="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
-
-          test -s "$CPP"
-
-          cp "$SHADER" "$OUT/libp4gshader.so"
-          cp "$CPP" "$OUT/libc++_shared.so"
-
-          echo "Checking ARM64 architecture..."
-
-          READELF="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-
-          "$READELF" -h "$OUT/libp4gshader.so" \
-            > "$OUT/shader-elf.txt"
-
-          grep -q AArch64 "$OUT/shader-elf.txt"
-
-          echo "Checking exported C API..."
-
-          NM="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
-
-          "$NM" -D --defined-only \
-            "$OUT/libp4gshader.so" \
-            > "$OUT/shader-symbols.txt"
-
-          grep -Eq '[[:space:]]p4g_shader_api_version$' \
-            "$OUT/shader-symbols.txt"
-
-          grep -Eq '[[:space:]]p4g_shader_convert$' \
-           "$OUT/shader-symbols.txt"
-
-          echo "Checking runtime dependencies..."
-
-          "$READELF" -d \
-            "$OUT/libp4gshader.so" \
-            > "$OUT/shader-dependencies.txt"
-
-          cat "$OUT/shader-dependencies.txt"
-
-          echo "P4G shader runtime ready."
-          ls -lh "$OUT"/*.so
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq patch zlib1g-dev spirv-tools
+          ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" bash tools/maxwell/build_p4g_translator.sh
 
       - name: Configure P4G ARM64
         shell: bash
@@ -221,7 +156,7 @@ jobs:
           path: |
             build-p4g/libp4g.so
             build-p4g/libp4gimport.so
-            build-apk/shader-libs/libp4gshader.so
+            build-apk/shader-libs/libspirvharness.so
             build-apk/shader-libs/libc++_shared.so
           if-no-files-found: error
 
@@ -332,46 +267,17 @@ jobs:
               "lib/arm64-v8a/libp4gimport.so":
                   "build-p4g/libp4gimport.so",
 
-              "lib/arm64-v8a/libp4gshader.so":
-                  "build-apk/shader-libs/libp4gshader.so",
+              "lib/arm64-v8a/libspirvharness.so":
+                  "build-apk/shader-libs/libspirvharness.so",
 
               "lib/arm64-v8a/libc++_shared.so":
                   "build-apk/shader-libs/libc++_shared.so",
           }
 
-          # Include the ready-to-use runtime pack, not the numbered GXP cache.
-          shader_root = Path("games/p4g/assets/spirv")
-          manifest = shader_root / "manifest.tsv"
-          if not manifest.is_file():
-              raise FileNotFoundError(manifest)
-          import hashlib
-          import re
-          records = [line.split("\t") for line in manifest.read_text().splitlines() if line.strip()]
-          if not records:
-              raise RuntimeError("Bundled shader pack is empty")
-          if not any(row[0] == "results.tsv" for row in records):
-              raise RuntimeError("Bundled shader resources metadata results.tsv is missing")
-          for name, digest, length in records:
-              if not re.fullmatch(r"(?:[0-9a-f]{16}\.spv|results\.tsv)", name):
-                  raise RuntimeError("Invalid bundled shader name")
-              source = shader_root / name
-              data = source.read_bytes()
-              if len(data) != int(length) or hashlib.sha256(data).hexdigest() != digest:
-                  raise RuntimeError(f"Bundled shader hash mismatch: {name}")
-              if name == "results.tsv":
-                  lines = data.decode("utf-8").splitlines()
-                  header = lines[0].split("\t") if lines else []
-                  if not header or header[0] != "hash" or "resources" not in header:
-                      raise RuntimeError("Invalid results.tsv header")
-                  column = header.index("resources")
-                  rows = [line.split("\t") for line in lines[1:]]
-                  if not any(len(row) > column and re.fullmatch(r"[0-9a-f]{16}", row[0])
-                             and row[column] for row in rows):
-                      raise RuntimeError("results.tsv has no resource mappings")
-              elif len(data) < 20 or len(data) % 4 or data[:4] != bytes.fromhex("03022307"):
-                  raise RuntimeError(f"Invalid SPIR-V header: {name}")
-              files[f"assets/spirv/{name}"] = str(source)
-          files["assets/spirv/manifest.tsv"] = str(manifest)
+          # Only compiler binaries and license notices. No game SPIR-V is packaged.
+          files["assets/licenses/Ryubing-MIT.txt"] = "build-apk/shader-libs/Ryubing-MIT.txt"
+          files["assets/licenses/dotnet-LICENSE.txt"] = "build-apk/shader-libs/dotnet-LICENSE.txt"
+          files["assets/licenses/dotnet-THIRD-PARTY-NOTICES.txt"] = "build-apk/shader-libs/dotnet-THIRD-PARTY-NOTICES.txt"
 
           if not apk.is_file():
               raise FileNotFoundError(apk)
@@ -431,17 +337,17 @@ jobs:
               "classes.dex",
               "lib/arm64-v8a/libp4g.so",
               "lib/arm64-v8a/libp4gimport.so",
-              "lib/arm64-v8a/libp4gshader.so",
+              "lib/arm64-v8a/libspirvharness.so",
               "lib/arm64-v8a/libc++_shared.so",
           ]
 
-          manifest = Path("games/p4g/assets/spirv/manifest.tsv")
-          required += ["assets/spirv/manifest.tsv"]
-          required += ["assets/spirv/" + line.split("\t")[0]
-                       for line in manifest.read_text().splitlines() if line.strip()]
+          required += ["assets/licenses/Ryubing-MIT.txt", "assets/licenses/dotnet-LICENSE.txt",
+                       "assets/licenses/dotnet-THIRD-PARTY-NOTICES.txt"]
 
           with zipfile.ZipFile(apk) as z:
               names = z.namelist()
+              if any(n.startswith("assets/spirv/") or n.endswith(".spv") or n.endswith("libp4gshader.so") for n in names):
+                  raise RuntimeError("APK contains bundled game shaders or the obsolete GXP converter")
 
               for name in required:
                   if names.count(name) != 1:
