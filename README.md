@@ -169,6 +169,6 @@ This project builds on the compatibility runtime and native port work of its ori
 
 The repository's source-code license is available in [LICENSE](LICENSE). Third-party components retain their respective licenses. Game content, character artwork and trademarks are not covered by the source-code license.
 
-Persona 4 Golden and the Rise character artwork belong to their respective rights holders, including ATLUS and SEGA. The launcher icon uses a user-supplied image of Rise.
+Persona 4 Golden and its associated trademarks belong to their respective rights holders, including ATLUS and SEGA. The launcher icon uses a custom geometric P4G wordmark.
 
 This is an unofficial fan project and is not affiliated with or endorsed by ATLUS, SEGA or Nintendo. Game dumps and encryption keys are not distributed with this project; users must supply their own.
