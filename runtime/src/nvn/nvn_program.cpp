@@ -20,6 +20,9 @@
 
 #include "nvn.h"
 #include "nvn_shaders.h"
+#ifdef NX_LOCAL_SHADERS
+#include "platform.h"
+#endif
 
 namespace nx::nvn {
 
@@ -38,17 +41,31 @@ struct Program : Object {
     std::vector<PendingStage> pending;       // set, not looked up yet
     std::atomic<bool> resolved{true};
     std::mutex lock;
+#ifdef NX_LOCAL_SHADERS
+    uint64_t retry_after = 0;
+#endif
 };
 
 void resolve(Program& p, uint64_t program) {
     std::lock_guard lk(p.lock);
     if (p.resolved.load(std::memory_order_relaxed)) return;
+#ifdef NX_LOCAL_SHADERS
+    if (plat::monotonic_ns() < p.retry_after) return;
+#endif
     std::vector<const ShaderInfo*> shaders;
     for (const PendingStage& st : p.pending) {
         uint8_t ctrl[kCtrlSize] = {};
         std::memcpy(ctrl, &st.magic, 4);
         std::memcpy(ctrl + kCtrlFields, st.fields.data(), st.fields.size());
-        if (const ShaderInfo* s = shader_for(st.code, reinterpret_cast<uint64_t>(ctrl))) shaders.push_back(s);
+        if (const ShaderInfo* s = shader_for(st.code, reinterpret_cast<uint64_t>(ctrl))) {
+            shaders.push_back(s);
+        }
+#ifdef NX_LOCAL_SHADERS
+        else {
+            p.retry_after = plat::monotonic_ns() + 1'000'000'000;
+            return;
+        }
+#endif
     }
     static const bool trace = std::getenv("NX_TRACE_PROGRAMS") != nullptr;  // each program's stages when set
     if (trace) {
@@ -91,6 +108,9 @@ void set_shaders(CPU& c, size_t stride) {
         std::lock_guard lk(p->lock);
         p->pending = std::move(pending);
         p->shaders.clear();
+#ifdef NX_LOCAL_SHADERS
+        p->retry_after = 0;
+#endif
         p->resolved.store(false, std::memory_order_release);
     }
     c.x[0] = 1;
@@ -105,7 +125,7 @@ const std::vector<const ShaderInfo*>* program_shaders(uint64_t program) {
     auto* p = get<Program>(program);
     if (!p) return nullptr;
     if (!p->resolved.load(std::memory_order_acquire)) resolve(*p, program);
-    return &p->shaders;
+    return p->resolved.load(std::memory_order_acquire) ? &p->shaders : nullptr;
 }
 
 NX_HLE("nvnProgramInitialize", ProgramInitialize);

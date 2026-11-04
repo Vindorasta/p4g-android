@@ -228,6 +228,9 @@ struct Cache {
     std::unordered_map<std::string, std::unique_ptr<ShaderInfo>> by_hash;  // null: no usable .spv (logged once)
     std::unordered_map<std::string, std::string> resources;                // results.tsv, hash -> resources
     bool resources_loaded = false;
+#ifdef NX_LOCAL_SHADERS
+    std::unordered_map<std::string, uint64_t> retry_after;
+#endif
 };
 
 Cache& cache() {
@@ -268,8 +271,15 @@ const ShaderInfo* shader_for(uint64_t code_host, uint64_t control) {
         else
             log("nvn: no %sresults.tsv: storage buffers of translated shaders cannot be bound", dir.c_str());
     }
-std::unique_ptr<ShaderInfo>& slot = k.by_hash[hash];
-std::string bytes;
+#ifdef NX_LOCAL_SHADERS
+    if (auto retry = k.retry_after.find(hash);
+        retry != k.retry_after.end() && plat::monotonic_ns() < retry->second) return nullptr;
+    auto retry_later = [&] { k.retry_after[hash] = plat::monotonic_ns() + 1'000'000'000; };
+#else
+    // With a fixed shader pack, a missing module cannot appear during gameplay.
+    k.by_hash.try_emplace(hash);
+#endif
+    std::string bytes;
 #ifdef NX_LOCAL_SHADERS
     // A first-use shader may not exist in ExeFS. Compile the exact code and control
     // supplied by NVN, with the same translator and bindings as preparation.
@@ -277,9 +287,7 @@ std::string bytes;
         std::string generated_hash, error;
         if (!local::compile(dir, code, c.code_size, ctrl, 0x880, generated_hash, error)) {
             log("nvn: local shader %s failed: %s", hash.c_str(), error.c_str());
-            if (FILE* f = plat::fopen_utf8(dir + "failed.txt", "wb")) {
-                std::fprintf(f, "Shader %s: %s\n", hash.c_str(), error.c_str()); std::fclose(f);
-            }
+            retry_later();
             return nullptr;
         }
         log("nvn: generated local shader %s", hash.c_str());
@@ -317,6 +325,9 @@ if (!read_whole(dir + hash + ".spv", bytes) ||
         }
     }
 
+#ifdef NX_LOCAL_SHADERS
+    retry_later();
+#endif
     return nullptr;
 }
     std::vector<uint32_t> words(bytes.size() / 4);
@@ -328,9 +339,7 @@ if (!read_whole(dir + hash + ".spv", bytes) ||
     if (!make_shader_info(code, ctrl, std::move(words), record, *info, &error)) {
         log("nvn: shader %s: %s", hash.c_str(), error.c_str());
 #ifdef NX_LOCAL_SHADERS
-        if (FILE* f = plat::fopen_utf8(dir + "failed.txt", "wb")) {
-            std::fprintf(f, "Shader %s reflection: %s\n", hash.c_str(), error.c_str()); std::fclose(f);
-        }
+        retry_later();
 #endif
         return nullptr;
     }
@@ -341,8 +350,12 @@ if (!read_whole(dir + hash + ".spv", bytes) ||
     info->dynamic_uniforms = dynamic_uniform_bindings(info.get());
     info->written_storage = written_storage_bindings(info.get());
     info->masks_known = true;
-    slot = std::move(info);
-    return slot.get();
+#ifdef NX_LOCAL_SHADERS
+    k.retry_after.erase(hash);
+#endif
+    const ShaderInfo* result = info.get();
+    k.by_hash.insert_or_assign(hash, std::move(info));
+    return result;
 }
 
 #endif  // NX_SHADERS_STANDALONE

@@ -358,8 +358,7 @@ bool make_surface() {
     if (g_surface) p_vkDestroySurfaceKHR(g_instance, g_surface, nullptr);
     if (g_window) plat::release_window(g_window);
     g_surface = VK_NULL_HANDLE;
-    g_window = plat::create_window();  // waits for a window (Android); the generation is read once it is there
-    g_window_gen = plat::window_generation();
+    g_window = plat::create_window(g_window_gen);
     uint64_t surface = 0;
     if (!check(VkResult(plat::vulkan_create_surface(g_instance, g_window, &surface, g_gipa)), "surface")) return false;
     g_surface = reinterpret_cast<VkSurfaceKHR>(surface);
@@ -389,7 +388,9 @@ bool make_swapchain() {
         g_swapchain = VK_NULL_HANDLE;
     }
     VkSurfaceCapabilitiesKHR caps{};
-    p_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_physical, g_surface, &caps);
+    VkResult caps_result = p_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_physical, g_surface, &caps);
+    if (caps_result == VK_ERROR_SURFACE_LOST_KHR) g_window_gen = 0;
+    if (!check(caps_result, "surface capabilities")) return false;
     VkExtent2D extent = caps.currentExtent;
     if (extent.width == UINT32_MAX) {
         uint32_t w = 0, h = 0;
@@ -753,7 +754,7 @@ void gpu_present(uint64_t texture, const int32_t* crop, uint64_t origin_ns) {
     if (!async_gpu() || pipelined()) free_retired_images(async_gpu() ? frame_completed() : UINT64_MAX);
     if (plat::headless()) return present_headless(texture);
     if (plat::window_minimized()) return;
-    if (plat::window_generation() != g_window_gen) {  // Android: a new window after home or the lock screen
+    if (!g_surface || plat::window_generation() != g_window_gen) {  // Android: a new window after home or the lock screen
         if (async_gpu()) frame_wait_all();
         p_vkDeviceWaitIdle(g_device);
         present_pass_release();
@@ -766,6 +767,10 @@ void gpu_present(uint64_t texture, const int32_t* crop, uint64_t origin_ns) {
     uint32_t index = 0;
     VkSemaphore acquired = async_gpu() ? frame_acquire_semaphore() : g_acquired;
     VkResult r = p_vkAcquireNextImageKHR(g_device, g_swapchain, UINT64_MAX, acquired, VK_NULL_HANDLE, &index);
+    if (r == VK_ERROR_SURFACE_LOST_KHR) {
+        g_window_gen = 0;
+        return;
+    }
     if (r == VK_ERROR_OUT_OF_DATE_KHR) {
         make_swapchain();
         return;
@@ -841,6 +846,10 @@ void gpu_present(uint64_t texture, const int32_t* crop, uint64_t origin_ns) {
         pi.pNext = &times;
     }
     r = p_vkQueuePresentKHR(g_queue, &pi);
+    if (r == VK_ERROR_SURFACE_LOST_KHR) {
+        g_window_gen = 0;
+        return;
+    }
     if (g_past_timing && origin_ns && r >= 0) {  // the pictures that reached the screen since the last present
         VkPastPresentationTimingGOOGLE past[16];
         uint32_t n = 16;
