@@ -33,7 +33,17 @@ final class DiagnosticLogs {
 
     private DiagnosticLogs() {}
 
-    static String export(Context context) throws IOException {
+    static final class Exported {
+        final String name;
+        final Uri uri;
+
+        Exported(String name, Uri uri) {
+            this.name = name;
+            this.uri = uri;
+        }
+    }
+
+    static Exported export(Context context) throws IOException {
         String name = "P4G-logs-" + new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US)
                 .format(new Date()) + ".txt";
         ContentResolver resolver = context.getContentResolver();
@@ -55,14 +65,19 @@ final class DiagnosticLogs {
                         + " | Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")\n");
                 if (Build.VERSION.SDK_INT >= 30) Api30.writeExitHistory(context, out);
                 out.write("\n--- Recent Android messages ---\n");
-                if (!writeLogcat(context, out)) writeRuntimeTail(out);
+                File root = Launcher.dataDir();
+                if (!writeLogcat(context, out)) {
+                    writeRuntimeTail(out, new File(root, "nx.log"), "Runtime log fallback");
+                }
+                File previous = new File(root, "nx.log.prev");
+                if (previous.isFile()) writeRuntimeTail(out, previous, "Previous runtime session");
             }
             values.clear();
             values.put(MediaStore.Downloads.IS_PENDING, 0);
             if (resolver.update(uri, values, null, null) != 1)
                 throw new IOException("Could not publish the log file.");
             published = true;
-            return name;
+            return new Exported(name, uri);
         } finally {
             if (!published) resolver.delete(uri, null, null);
         }
@@ -111,15 +126,16 @@ final class DiagnosticLogs {
         }
     }
 
-    private static void writeRuntimeTail(BufferedWriter out) throws IOException {
-        File log = new File(Launcher.dataDir(), "nx.log");
-        out.write("\n--- Runtime log fallback ---\n");
+    private static void writeRuntimeTail(BufferedWriter out, File log, String heading) throws IOException {
+        out.write("\n--- " + heading + " (" + log.getName() + ") ---\n");
         byte[] tail;
+        boolean truncated;
         try (RandomAccessFile in = new RandomAccessFile(log, "r")) {
             long end = in.length();
             long start = Math.max(0, end - MAX_RUNTIME_BYTES);
             in.seek(start);
-            if (start != 0) {
+            truncated = start != 0;
+            if (truncated) {
                 // Skip the partial first line of a tail snapshot.
                 while (in.getFilePointer() < end && in.read() != '\n') { }
             }
@@ -129,6 +145,7 @@ final class DiagnosticLogs {
             out.write("No runtime log could be read.\n");
             return;
         }
+        if (truncated) out.write("[Showing the last 256 KiB]\n");
         out.write(new String(tail, StandardCharsets.UTF_8));
         out.newLine();
     }

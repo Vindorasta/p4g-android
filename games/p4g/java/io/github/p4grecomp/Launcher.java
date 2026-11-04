@@ -641,23 +641,36 @@ public class Launcher extends Activity {
         Context app = getApplicationContext();
         Toast.makeText(this, t("Exportando logs…", "Exporting logs…"), Toast.LENGTH_SHORT).show();
         new Thread(() -> {
-            String name = null;
+            DiagnosticLogs.Exported exported = null;
             String error = null;
             try {
-                name = DiagnosticLogs.export(app);
+                exported = DiagnosticLogs.export(app);
             } catch (Exception e) {
                 error = String.valueOf(e.getMessage());
             }
-            final String file = name;
+            final DiagnosticLogs.Exported file = exported;
             final String failure = error;
             runOnUiThread(() -> {
                 exportingLogs = false;
                 if (isFinishing() || isDestroyed()) return;
                 if (failure != null) tell(t("No se pudieron exportar los logs", "Could not export logs"), failure);
-                else tell(t("Logs exportados", "Logs exported"),
-                        Lang.f("Guardados en Descargas/%s.", "Saved to Downloads/%s.", file));
+                else new AlertDialog.Builder(this)
+                        .setTitle(t("Logs exportados", "Logs exported"))
+                        .setMessage(Lang.f("Guardados en Descargas/%s.", "Saved to Downloads/%s.", file.name))
+                        .setPositiveButton(t("Compartir", "Share"), (dialog, which) -> shareLogs(file))
+                        .setNegativeButton(t("Cerrar", "Close"), null)
+                        .show();
             });
         }, "P4G-log-export").start();
+    }
+
+    private void shareLogs(DiagnosticLogs.Exported file) {
+        Intent share = new Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_STREAM, file.uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        share.setClipData(ClipData.newRawUri(file.name, file.uri));
+        startActivity(Intent.createChooser(share, t("Compartir logs", "Share logs")));
     }
 
     void exportSaves() {
