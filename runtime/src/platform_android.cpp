@@ -107,6 +107,7 @@ struct ThreadStart {
 static void* thread_entry(void* p) {
     ThreadStart s = *static_cast<ThreadStart*>(p);
     delete static_cast<ThreadStart*>(p);
+    place_fast_cores();
     s.fn(s.arg);
     return nullptr;
 }

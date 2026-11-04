@@ -105,6 +105,9 @@ void perf_hint_frame(int64_t ns);
 void gpu_turbo();  // NX_GPU_TURBO=1: the Adreno GPU at its highest clock (perf_hint.cpp; Android)
 // Frame threads and present intervals (frame_stats.cpp): the cores they run on, their CPU time, NX_AFFINITY.
 // role 0: the thread that replays and presents (frame_presented ticks it); 1: the game's main thread.
+#if defined(__ANDROID__)
+void place_fast_cores();  // applies the opt-in worker affinity to the current thread
+#endif
 void frame_thread_tick(int role);
 void frame_presented();  // after each present to the display
 // Linux: asks power-profiles-daemon for its performance profile for as long as this process lives (frame_stats.cpp).

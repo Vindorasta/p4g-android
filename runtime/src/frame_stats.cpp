@@ -4,9 +4,10 @@
 // thread also logs a histogram of the intervals between presents and the thermal headroom.
 //
 // NX_AFFINITY (Android): 1 puts the thread that replays and presents on the fastest cluster and the game's main
-// thread on the middle ones; 2 puts both on everything but the slowest cluster. Re-applied every 60 ticks (Android
-// moves an app's threads between cpusets). Unset or 0: the scheduler decides, as before.
+// thread on the middle ones; 2 places game and worker threads on all performance clusters. Frame-thread affinity
+// is re-applied every 60 ticks (Android moves an app's threads between cpusets). Unset or 0: the scheduler decides.
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -58,28 +59,39 @@ struct Cpus {
 const Cpus& cpus() {
     static const Cpus c = [] {
         Cpus x;
-        long n = sysconf(_SC_NPROCESSORS_CONF);
-        std::vector<long> freq;
-        for (long k = 0; k < n && k < 32; k++) {
-            char path[96];
-            std::snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%ld/cpufreq/cpuinfo_max_freq", k);
-            long f = 0;
-            if (FILE* fp = std::fopen(path, "r")) {
-                if (std::fscanf(fp, "%ld", &f) != 1) f = 0;
-                std::fclose(fp);
+        const long n = std::clamp(sysconf(_SC_NPROCESSORS_CONF), 0L, long(CPU_SETSIZE));
+        std::vector<long> ratings(size_t(n), 0), distinct;
+        // Adapted from P5R v0.5.4 (0b1c74f). Try complete sources in order and
+        // never infer a performance cluster from CPU numbering or missing values.
+        const char* source = "unknown";
+        for (const char* candidate : {"cpufreq/cpuinfo_max_freq", "cpu_capacity", "cpufreq/scaling_max_freq"}) {
+            for (long cpu = 0; cpu < n; ++cpu) {
+                char path[128];
+                std::snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%ld/%s", cpu, candidate);
+                long value = 0;
+                if (FILE* file = std::fopen(path, "r")) {
+                    if (std::fscanf(file, "%ld", &value) != 1 || value < 0) value = 0;
+                    std::fclose(file);
+                }
+                ratings[size_t(cpu)] = value;
             }
-            freq.push_back(f);
+            distinct = ratings;
+            std::sort(distinct.begin(), distinct.end());
+            distinct.erase(std::unique(distinct.begin(), distinct.end()), distinct.end());
+            if (distinct.size() > 1 && distinct.front() > 0) {
+                source = candidate;
+                break;
+            }
+            distinct.clear();
         }
-        std::vector<long> distinct = freq;
-        std::sort(distinct.begin(), distinct.end());
-        distinct.erase(std::unique(distinct.begin(), distinct.end()), distinct.end());
-        for (long f : freq)
-            x.cluster.push_back(int(std::lower_bound(distinct.begin(), distinct.end(), f) - distinct.begin()));
-        x.clusters = int(distinct.size());
+        x.clusters = distinct.empty() ? 1 : int(distinct.size());
+        for (long value : ratings)
+            x.cluster.push_back(int(std::lower_bound(distinct.begin(), distinct.end(), value) - distinct.begin()));
+        if (distinct.empty()) std::fill(ratings.begin(), ratings.end(), 0);
         std::string desc;
-        for (size_t k = 0; k < freq.size(); k++)
-            desc += (k ? " " : "") + std::to_string(freq[k] / 1000) + "/" + std::to_string(x.cluster[k]);
-        log("threads: %ld CPUs, MHz/cluster: %s", n, desc.c_str());
+        for (size_t k = 0; k < ratings.size(); ++k)
+            desc += (k ? " " : "") + std::to_string(ratings[k]) + "/" + std::to_string(x.cluster[k]);
+        log("threads: %ld CPUs, rating/cluster (%s): %s", n, source, desc.c_str());
         return x;
     }();
     return c;
@@ -94,28 +106,29 @@ int affinity_mode() {
 }
 
 void place(int role) {
+    const int mode = affinity_mode();
+    if (!mode) return;
     const Cpus& c = cpus();
-    int mode = affinity_mode();
-    if (!mode || c.clusters < 2) return;
+    if (c.clusters < 2) return;
     cpu_set_t set;
     CPU_ZERO(&set);
-    int top = c.clusters - 1;
-    for (size_t k = 0; k < c.cluster.size(); k++) {
-        int cl = c.cluster[k];
-        bool in = mode == 2 ? cl > 0 : role == 0 ? cl == top : (c.clusters > 2 ? cl > 0 && cl < top : cl == top);
+    const int top = c.clusters - 1;
+    for (size_t k = 0; k < c.cluster.size(); ++k) {
+        const int cl = c.cluster[k];
+        const bool in = mode == 2 ? cl > 0 : role == 0 ? cl == top : (c.clusters > 2 ? cl > 0 && cl < top : cl == top);
         if (in) CPU_SET(int(k), &set);
     }
     if (sched_setaffinity(0, sizeof set, &set) == 0) return;
-    // The prime core paused (Android takes it offline when the phone is hot): every big core instead, not wherever
-    // the scheduler left the thread (the little ones included).
-    CPU_ZERO(&set);
-    for (size_t k = 0; k < c.cluster.size(); k++)
-        if (c.cluster[k] > 0) CPU_SET(int(k), &set);
-    static uint64_t failed = 0;
-    if (failed++ % 100 == 0)
-        log("threads: sched_setaffinity to role %d's cores failed %llu times: all big cores instead", role,
-            (unsigned long long)failed);
-    sched_setaffinity(0, sizeof set, &set);
+    if (mode != 2) {
+        // A preferred cluster can be unavailable while the device is hot.
+        CPU_ZERO(&set);
+        for (size_t k = 0; k < c.cluster.size(); ++k)
+            if (c.cluster[k] > 0) CPU_SET(int(k), &set);
+        if (sched_setaffinity(0, sizeof set, &set) == 0) return;
+    }
+    static std::atomic_flag failed = ATOMIC_FLAG_INIT;
+    if (!failed.test_and_set(std::memory_order_relaxed))
+        log("threads: performance cores unavailable; keeping scheduler affinity");
 }
 
 float thermal_headroom() {
@@ -193,6 +206,12 @@ void request_performance_profile() {
     log("power: performance profile requested through powerprofilesctl (%s)", rc == 0 ? "started" : "not available");
 #endif
 }
+
+#if defined(__ANDROID__)
+void place_fast_cores() {
+    if (affinity_mode() == 2) place(0);
+}
+#endif
 
 void frame_thread_tick(int role) {
     Role& r = g_roles[role & 1];
