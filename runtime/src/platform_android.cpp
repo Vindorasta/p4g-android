@@ -39,6 +39,9 @@
 #define VK_NO_PROTOTYPES
 #define VK_USE_PLATFORM_ANDROID_KHR
 #include <vulkan/vulkan.h>
+#if defined(NX_CUSTOM_DRIVER)
+#include <adrenotools/driver.h>
+#endif
 
 #include <nx/game.h>
 #include <nx/runtime.h>
@@ -403,9 +406,96 @@ float default_render_scale() {
 
 // ---- Vulkan ---------------------------------------------------------------------------------------------------
 
+#if defined(NX_CUSTOM_DRIVER)
+namespace {
+
+bool probe_vulkan(PFN_vkGetInstanceProcAddr gipa, VkDriverId driver) {
+    if (!gipa) return false;
+    auto create = reinterpret_cast<PFN_vkCreateInstance>(gipa(nullptr, "vkCreateInstance"));
+    if (!create) return false;
+    const char* extensions[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_ANDROID_SURFACE_EXTENSION_NAME};
+    VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+    app.apiVersion = VK_API_VERSION_1_3;
+    VkInstanceCreateInfo ci{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    ci.pApplicationInfo = &app;
+    ci.enabledExtensionCount = 2;
+    ci.ppEnabledExtensionNames = extensions;
+    VkInstance instance = VK_NULL_HANDLE;
+    if (create(&ci, nullptr, &instance) != VK_SUCCESS) return false;
+    auto destroy = reinterpret_cast<PFN_vkDestroyInstance>(gipa(instance, "vkDestroyInstance"));
+    auto enumerate = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(gipa(instance, "vkEnumeratePhysicalDevices"));
+    auto properties = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(
+        gipa(instance, "vkGetPhysicalDeviceProperties2"));
+    bool matches = false;
+    uint32_t count = 0;
+    if (destroy && enumerate && properties && enumerate(instance, &count, nullptr) == VK_SUCCESS && count) {
+        std::vector<VkPhysicalDevice> devices(count);
+        if (enumerate(instance, &count, devices.data()) == VK_SUCCESS) {
+            for (uint32_t i = 0; i < count; ++i) {
+                VkPhysicalDeviceDriverProperties identity{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+                VkPhysicalDeviceProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+                props.pNext = &identity;
+                properties(devices[i], &props);
+                if (identity.driverID == driver && props.properties.apiVersion >= VK_API_VERSION_1_3) {
+                    matches = true;
+                    break;
+                }
+            }
+        }
+    }
+    if (destroy) destroy(instance, nullptr);
+    return matches;
+}
+
+// Adapted from P5R Android v0.5.3. The custom-driver hook is independent of
+// KGSL memory import, so it can also load Android PanVK packages on Mali.
+void* custom_vulkan() {
+    if (!g_app || !g_app->activity->internalDataPath) return nullptr;
+    if (const char* value = std::getenv("NX_SYSTEM_DRIVER"); value && std::strcmp(value, "1") == 0)
+        return nullptr;
+    const std::string root = std::string(g_app->activity->internalDataPath) + "/gpu_driver/";
+    std::ifstream marker(root + "active.txt");
+    std::string path;
+    if (!std::getline(marker, path) || path.size() > 256) return nullptr;
+    const size_t slash = path.find('/');
+    if (slash == std::string::npos) return nullptr;
+    const std::string folder = path.substr(0, slash), library = path.substr(slash + 1);
+    const bool panvk = folder.starts_with("panvk-");
+    if (!panvk && !folder.starts_with("turnip-")) return nullptr;
+    const size_t prefix = panvk ? 6 : 7;
+    if (folder.size() != prefix + 36 || folder.find_first_not_of("0123456789abcdef-", prefix) != std::string::npos ||
+        library.empty() || !library.ends_with(".so") ||
+        library.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-") != std::string::npos)
+        return nullptr;
+    Dl_info info{};
+    if (!dladdr(reinterpret_cast<void*>(&custom_vulkan), &info) || !info.dli_fname) return nullptr;
+    std::string hooks = info.dli_fname;
+    hooks.resize(hooks.rfind('/') + 1);
+    const std::string dir = root + folder + "/";
+    void* handle = adrenotools_open_libvulkan(RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM, nullptr,
+                                             hooks.c_str(), dir.c_str(), library.c_str(), nullptr, nullptr);
+    void* gipa = handle ? dlsym(handle, "vkGetInstanceProcAddr") : nullptr;
+    if (!probe_vulkan(reinterpret_cast<PFN_vkGetInstanceProcAddr>(gipa),
+                      panvk ? VK_DRIVER_ID_MESA_PANVK : VK_DRIVER_ID_MESA_TURNIP)) {
+        nx::log("gpu driver: %s failed verification; using system driver", library.c_str());
+        return nullptr;
+    }
+    nx::log("gpu driver: using %s (%s)", library.c_str(), panvk ? "PanVK" : "Turnip");
+    return gipa;
+}
+
+}  // namespace
+#endif
+
 void* vulkan_get_instance_proc_addr() {
-    void* lib = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
-    return lib ? dlsym(lib, "vkGetInstanceProcAddr") : nullptr;
+    static void* gipa = []() -> void* {
+#if defined(NX_CUSTOM_DRIVER)
+        if (void* custom = custom_vulkan()) return custom;
+#endif
+        void* lib = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+        return lib ? dlsym(lib, "vkGetInstanceProcAddr") : nullptr;
+    }();
+    return gipa;
 }
 
 const char* vulkan_surface_extension() { return VK_KHR_ANDROID_SURFACE_EXTENSION_NAME; }
