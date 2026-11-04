@@ -13,6 +13,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -54,7 +56,8 @@ final class SaveFiles {
         if (from.isDirectory()) {
             if (!to.isDirectory() && !to.mkdirs()) throw new IOException("cannot make " + to);
             File[] kids = from.listFiles();
-            if (kids != null) for (File k : kids) copyTree(k, new File(to, k.getName()));
+            if (kids == null) throw new IOException("Cannot list " + from);
+            for (File k : kids) copyTree(k, new File(to, k.getName()));
         } else {
             try (InputStream in = new FileInputStream(from); OutputStream out = new FileOutputStream(to)) {
                 copy(in, out);
@@ -99,7 +102,29 @@ final class SaveFiles {
         if (kids != null) for (File f : kids) f.delete();
         dir.delete();
     }
-    static Result commit(Map<String, File> files) throws IOException {
+    private static void moveDirectory(File from, File to) throws IOException {
+        Files.move(from.toPath(), to.toPath(), StandardCopyOption.ATOMIC_MOVE);
+    }
+
+    private static void removeTree(File path) throws IOException {
+        if (!Files.isSymbolicLink(path.toPath()) && path.isDirectory()) {
+            File[] children = path.listFiles();
+            if (children == null) throw new IOException("Cannot list " + path);
+            for (File child : children) removeTree(child);
+        }
+        Files.deleteIfExists(path.toPath());
+    }
+
+    static synchronized void recover() throws IOException {
+        File live = saveDir();
+        File user = live.getParentFile();
+        File previous = new File(user, ".save-import-previous");
+        if (previous.exists() && !live.exists()) moveDirectory(previous, live);
+        removeTree(previous);
+        removeTree(new File(user, ".save-import-next"));
+    }
+
+    static synchronized Result commit(Map<String, File> files) throws IOException {
         if (files.isEmpty()) return null;
         for (String name : files.keySet()) {
             if (files.get(name).length() == 0) throw new IOException("Empty save: " + name);
@@ -109,38 +134,34 @@ final class SaveFiles {
                     throw new IOException("Import both files for this slot: " + stem + ".bin and " + stem + ".binslot.");
             }
         }
+        recover();
+        File live = saveDir();
+        File user = live.getParentFile();
+        File next = new File(user, ".save-import-next");
+        File previous = new File(user, ".save-import-previous");
         Result result = new Result();
         result.backup = backup();
-        if (!saveDir().isDirectory() && !saveDir().mkdirs()) throw new IOException("Could not create user/save.");
-        List<String> written = new ArrayList<>();
+        if (!next.mkdirs()) throw new IOException("Could not stage the save directory.");
         try {
+            if (live.exists()) copyTree(live, next);
             for (Map.Entry<String, File> entry : files.entrySet()) {
                 String name = entry.getKey();
-                written.add(name);
-                android.util.AtomicFile atomic = new android.util.AtomicFile(new File(saveDir(), name));
-                FileOutputStream stream = null;
-                try (InputStream in = new FileInputStream(entry.getValue())) {
-                    stream = atomic.startWrite();
-                    copy(in, stream);
-                    atomic.finishWrite(stream);
-                    stream = null;
-                } catch (IOException e) {
-                    if (stream != null) atomic.failWrite(stream);
-                    throw e;
-                }
+                copyTree(entry.getValue(), new File(next, name));
                 result.files++;
                 if (name.startsWith("data")) result.slots.add(name.substring(4, 8));
             }
-        } catch (IOException e) {
-            for (String name : written) {
-                File previous = result.backup == null ? null : new File(Launcher.dataDir(), "user/" + result.backup + "/" + name);
-                try {
-                    if (previous != null && previous.isFile()) copyTree(previous, new File(saveDir(), name));
-                    else new File(saveDir(), name).delete();
-                } catch (IOException restore) { e.addSuppressed(restore); }
-            }
+            // Both renames are within user/. If interrupted between them, recover()
+            // restores the old directory before the game or exporter reads saves.
+            if (live.exists()) moveDirectory(live, previous);
+            moveDirectory(next, live);
+        } catch (IOException | RuntimeException e) {
+            try { recover(); }
+            catch (IOException restore) { e.addSuppressed(restore); }
             throw e;
         }
+        // The new directory is already live. Cleanup can be retried on launch.
+        try { removeTree(previous); }
+        catch (IOException e) { android.util.Log.w("P4G-Saves", "Save cleanup pending", e); }
         return result;
     }
     static Result importZip(ContentResolver cr, Uri uri) throws IOException {
@@ -245,7 +266,8 @@ final class SaveFiles {
     }
 
     /** The ZIP written, or null when there are no saves to export. */
-    static File export() throws IOException {
+    static synchronized File export() throws IOException {
+        recover();
         if (!hasFiles(saveDir())) return null;
         File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("cannot make " + dir);

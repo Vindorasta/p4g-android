@@ -33,6 +33,7 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.FileOutputStream;
 import java.io.FileWriter;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
@@ -80,7 +81,9 @@ public class Launcher extends Activity {
     }
 
     boolean hasAccess() {
-        if (Build.VERSION.SDK_INT < 30) return true;
+        if (Build.VERSION.SDK_INT < 30)
+            return checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
         return Api30Helper.isExternalStorageManager();
     }
 
@@ -465,7 +468,10 @@ public class Launcher extends Activity {
     }
 
     void launchAfterShaderInstall() {
+        if (importingSaves) return;
         if (!readyForPlay || !gameReadable() || !hasKeys()) { refresh(); return; }
+        try { SaveFiles.recover(); }
+        catch (IOException e) { tell("Save recovery failed", String.valueOf(e.getMessage())); return; }
         save();
         Intent i = new Intent(this, GameActivity.class);
         i.setData(Uri.parse(gameUri()));
@@ -627,7 +633,18 @@ public class Launcher extends Activity {
         }
     }
 
+    @Override
+    public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(request, permissions, results);
+        if (request == 100) refresh();
+    }
+
     void askAccess() {
+        if (Build.VERSION.SDK_INT < 30) {
+            requestPermissions(new String[] {android.Manifest.permission.READ_EXTERNAL_STORAGE,
+                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE}, 100);
+            return;
+        }
         try {
             startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                     Uri.parse("package:" + getPackageName())));

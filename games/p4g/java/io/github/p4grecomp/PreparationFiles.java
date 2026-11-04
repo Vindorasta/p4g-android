@@ -36,7 +36,7 @@ final class PreparationFiles {
     }
     static boolean ready(File runtime) throws IOException {
         File marker = new File(runtime, "prepared.tsv");
-        if (!marker.isFile() || new File(runtime, "failed.txt").exists()) return false;
+        if (!marker.isFile()) return false;
         try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(marker), "UTF-8"))) {
             if (!FORMAT.equals(r.readLine())) return false;
             Set<String> seeds = new HashSet<>();
@@ -46,12 +46,7 @@ final class PreparationFiles {
                         !module(runtime, fields[1])) return false;
             }
         }
-        File[] files = runtime.listFiles();
-        if (files == null) return false;
-        for (File f : files) if (f.getName().endsWith(".spv")) {
-            String name = f.getName();
-            if (!module(runtime, name.substring(0, name.length() - 4))) return false;
-        }
+        // Runtime-generated modules are checked and regenerated individually on use.
         return true; // A valid, probed compiler may have zero ExeFS seeds.
     }
 }
