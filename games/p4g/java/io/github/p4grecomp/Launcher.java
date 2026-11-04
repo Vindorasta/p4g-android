@@ -29,6 +29,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.BufferedReader;
+import java.io.DataInputStream;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileOutputStream;
@@ -36,6 +37,8 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -475,7 +478,7 @@ public class Launcher extends Activity {
     }
 
     void launchAfterShaderInstall() {
-        if (importingSaves) return;
+        if (importingSaves || importingCpk) return;
         if (!readyForPlay || !gameReadable() || !hasKeys()) { refresh(); return; }
         try { SaveFiles.recover(); }
         catch (IOException e) { tell("Save recovery failed", String.valueOf(e.getMessage())); return; }
@@ -755,23 +758,70 @@ public class Launcher extends Activity {
 
     int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 
+    private static final String[] CPK_TARGETS = {"data.cpk", "sysdat.cpk", "data_movie.cpk"};
+    private boolean importingCpk;
+
     void importCpk(Uri uri) {
-        try {
-            File cpkDir = new File(dataDir(), "mods" + File.separator + "translation" + File.separator + "romfs" + File.separator + "CPK");
-            if (!cpkDir.exists()) cpkDir.mkdirs();
-            File dest = new File(cpkDir, "PATCH1.CPK");
-            try (InputStream in = getContentResolver().openInputStream(uri);
-                 OutputStream out = new FileOutputStream(dest)) {
-                if (in == null) throw new java.io.IOException("Cannot open selected file");
-                byte[] buf = new byte[65536];
-                int n;
-                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        if (importingCpk) return;
+        String name = displayName(uri);
+        for (String target : CPK_TARGETS) {
+            if (target.equalsIgnoreCase(name)) {
+                installCpk(uri, target);
+                return;
             }
-            Toast.makeText(this, t("Traducción instalada en mods/translation/ (PATCH1.CPK)",
-                    "Translation installed to mods/translation/ (as PATCH1.CPK)"), Toast.LENGTH_LONG).show();
-        } catch (Exception e) {
-            Toast.makeText(this, t("Error al importar CPK: " + e.getMessage(),
-                    "Error importing CPK: " + e.getMessage()), Toast.LENGTH_LONG).show();
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(t("¿Qué archivo sustituye el mod?", "Which game file does the mod replace?"))
+                .setItems(CPK_TARGETS, (dialog, index) -> installCpk(uri, CPK_TARGETS[index]))
+                .setNegativeButton(t("Cancelar", "Cancel"), null)
+                .show();
+    }
+
+    private void installCpk(Uri uri, String target) {
+        if (importingCpk) return;
+        importingCpk = true;
+        Toast.makeText(this, t("Importando CPK…", "Importing CPK…"), Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            String error = null;
+            try {
+                copyCpk(uri, target);
+            } catch (Exception e) {
+                error = String.valueOf(e.getMessage());
+            }
+            final String failure = error;
+            runOnUiThread(() -> {
+                importingCpk = false;
+                if (isFinishing() || isDestroyed()) return;
+                if (failure == null) {
+                    tell(t("CPK instalado", "CPK installed"), "mods/translation/romfs/" + target
+                            + t("\nSe aplica al volver a abrir el juego.", "\nApplied the next time you open the game."));
+                } else {
+                    tell(t("Error al importar CPK", "Could not import CPK"), failure);
+                }
+            });
+        }, "P4G-cpk-import").start();
+    }
+
+    private void copyCpk(Uri uri, String target) throws IOException {
+        // app0:/data.cpk, app0:/sysdat.cpk and app0:/data_movie.cpk are at the RomFS root.
+        File romfs = new File(dataDir(), "mods/translation/romfs");
+        if (!romfs.isDirectory() && !romfs.mkdirs()) throw new IOException("Could not create the mod folder.");
+        File staged = File.createTempFile(".import-", ".tmp", romfs);
+        try {
+            InputStream stream = getContentResolver().openInputStream(uri);
+            if (stream == null) throw new IOException("Could not open the selected file.");
+            try (DataInputStream in = new DataInputStream(stream);
+                 FileOutputStream out = new FileOutputStream(staged)) {
+                int magic = in.readInt();
+                if (magic != 0x43504B20) throw new IOException("The selected file is not a CRI CPK archive.");
+                out.write(new byte[] {'C', 'P', 'K', ' '});
+                SaveFiles.copy(in, out);
+                out.getFD().sync();
+            }
+            Files.move(staged.toPath(), new File(romfs, target).toPath(),
+                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            if (staged.exists() && !staged.delete()) Log.w("P4G-Launch", "Could not remove staged CPK");
         }
     }
 
