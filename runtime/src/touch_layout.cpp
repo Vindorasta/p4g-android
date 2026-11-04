@@ -81,7 +81,7 @@ struct Layout {
 const Layout kLayouts[] = {
     {"wonder", kWonder, std::size(kWonder), false, kY, 0.15f, 0.72f},
     {"p5r", kP5R, std::size(kP5R), true, 0, 0.15f, 0.76f},
-    // P4G's ControlsEditor uses this same layout. Register it for drawing and hit-testing.
+    // P4G shares P5R's positions and assigns Xbox labels and actions in buttons().
     {"p4g", kP5R, std::size(kP5R), true, 0, 0.15f, 0.76f},
 };
 
@@ -129,9 +129,18 @@ const std::vector<TouchButton>& buttons() {
         std::vector<TouchButton> out;
         const Layout* l = layout();
         if (!l) return out;
+        const bool xbox = std::strcmp(l->game, "p4g") == 0;
+        // Keep NX_TOUCH_LAYOUT keys tied to their original positions, so existing
+        // custom layouts retain their geometry. kP5R starts with A, B, X, Y.
+        constexpr size_t xbox_face[] = {1, 0, 3, 2};
         for (size_t k = 0; k < l->count; k++) {
             out.push_back(l->buttons[k].b);
             layout_entry(l->buttons[k].name, out[k].x, out[k].y, out[k].r);
+            if (xbox && k < std::size(xbox_face)) {
+                const TouchButton& face = kP5R[xbox_face[k]].b;
+                out[k].button = face.button;
+                out[k].label = face.label;
+            }
         }
         float scale = float(std::clamp(env_int("NX_TOUCH_SIZE", 100), 50, 160)) / 100.0f;
         for (auto& b : out) b.r *= scale;

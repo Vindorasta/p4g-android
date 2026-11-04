@@ -137,6 +137,7 @@ constexpr uint64_t kTouchIdleNs = 8'000'000'000;
 
 bool gamepad_swap_abxy() {
     static const bool swap = [] {
+        if (std::strcmp(nx::game::kInfo.id, "p4g") == 0) return true;
         const char* e = std::getenv("NX_GAMEPAD_LAYOUT");
         return e && std::strcmp(e, "1") == 0;
     }();
