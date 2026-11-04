@@ -156,6 +156,10 @@ jobs:
           path: |
             build-p4g/libp4g.so
             build-p4g/libp4gimport.so
+            build-p4g/adrenotools/src/hook/libhook_impl.so
+            build-p4g/adrenotools/src/hook/libmain_hook.so
+            build-p4g/adrenotools/src/hook/libfile_redirect_hook.so
+            build-p4g/adrenotools/src/hook/libgsl_alloc_hook.so
             build-apk/shader-libs/libspirvharness.so
             build-apk/shader-libs/libc++_shared.so
           if-no-files-found: error
@@ -274,7 +278,12 @@ jobs:
                   "build-apk/shader-libs/libc++_shared.so",
           }
 
-          # Only compiler binaries and license notices. No game SPIR-V is packaged.
+          for hook in ("hook_impl", "main_hook", "file_redirect_hook", "gsl_alloc_hook"):
+              files[f"lib/arm64-v8a/lib{hook}.so"] = f"build-p4g/adrenotools/src/hook/lib{hook}.so"
+          files["assets/licenses/libadrenotools.txt"] = "third_party/libadrenotools/LICENSE"
+          files["assets/licenses/linkernsbypass.txt"] = "third_party/libadrenotools/lib/linkernsbypass/LICENSE"
+
+          # No game SPIR-V is packaged.
           files["assets/licenses/Ryubing-MIT.txt"] = "build-apk/shader-libs/Ryubing-MIT.txt"
           files["assets/licenses/dotnet-LICENSE.txt"] = "build-apk/shader-libs/dotnet-LICENSE.txt"
           files["assets/licenses/dotnet-THIRD-PARTY-NOTICES.txt"] = "build-apk/shader-libs/dotnet-THIRD-PARTY-NOTICES.txt"
@@ -337,6 +346,12 @@ jobs:
               "classes.dex",
               "lib/arm64-v8a/libp4g.so",
               "lib/arm64-v8a/libp4gimport.so",
+              "lib/arm64-v8a/libhook_impl.so",
+              "lib/arm64-v8a/libmain_hook.so",
+              "lib/arm64-v8a/libfile_redirect_hook.so",
+              "lib/arm64-v8a/libgsl_alloc_hook.so",
+              "assets/licenses/libadrenotools.txt",
+              "assets/licenses/linkernsbypass.txt",
               "lib/arm64-v8a/libspirvharness.so",
               "lib/arm64-v8a/libc++_shared.so",
           ]
