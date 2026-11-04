@@ -32,7 +32,8 @@ public class ControlsEditor extends Activity {
     // (0..1 across the landscape screen), radius (a fraction of its height), group (moved together).
     static final String[] NAMES = {"A", "B", "X", "Y", "R", "ZR", "L", "ZL", "MINUS", "PLUS", "UP", "DOWN", "LEFT",
             "RIGHT", "STICK", "L3", "R3"};
-    static final String[] LABELS = {"A", "B", "X", "Y", "R", "ZR", "L", "ZL", "−", "+", "▲", "▼", "◀", "▶", "", "L3", "R3"};
+    // Legacy position keys above keep old layouts compatible. Labels follow the Xbox diamond.
+    static final String[] LABELS = {"B", "A", "Y", "X", "R", "ZR", "L", "ZL", "−", "+", "▲", "▼", "◀", "▶", "", "L3", "R3"};
     static final float[][] DEFAULTS = {
             {0.940f, 0.66f, 0.068f}, {0.875f, 0.80f, 0.068f}, {0.875f, 0.52f, 0.068f}, {0.810f, 0.66f, 0.068f},
             {0.945f, 0.08f, 0.052f}, {0.945f, 0.24f, 0.052f}, {0.055f, 0.08f, 0.052f}, {0.055f, 0.24f, 0.052f},
