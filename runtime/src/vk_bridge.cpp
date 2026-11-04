@@ -275,36 +275,43 @@ bool refresh_surface(SurfaceInfo& s) {
     if (s.host && s.generation == gen) return true;
     if (s.host) {
         p_vkDestroySurfaceKHR(s.instance, s.host, nullptr);
-        plat::release_window(s.window);
         s.host = VK_NULL_HANDLE;
     }
-    s.window = plat::create_window();
-    s.generation = gen;
+    if (s.window) plat::release_window(s.window);
+    s.window = plat::create_window(s.generation);
     uint64_t h = 0;
     VkResult r = VkResult(plat::vulkan_create_surface(s.instance, s.window, &h, reinterpret_cast<void*>(host_gipa)));
-    log("vk: surface re-made on window %p (generation %llu): %d", s.window, (unsigned long long)gen, r);
+    log("vk: surface re-made on window %p (generation %llu): %d", s.window, (unsigned long long)s.generation, r);
     s.host = reinterpret_cast<VkSurfaceKHR>(h);
     return r == VK_SUCCESS;
 }
 
-VkSurfaceKHR host_surface(uint64_t game) {
+VkSurfaceKHR host_surface(uint64_t game, uint64_t* generation = nullptr) {
     auto it = g_surfaces.find(game);
-    if (it == g_surfaces.end()) return reinterpret_cast<VkSurfaceKHR>(game);
-    refresh_surface(it->second);
+    if (it == g_surfaces.end()) {
+        if (generation) *generation = plat::window_generation();
+        return reinterpret_cast<VkSurfaceKHR>(game);
+    }
+    if (!refresh_surface(it->second)) return VK_NULL_HANDLE;
+    if (generation) *generation = it->second.generation;
     return it->second.host;
 }
 
 void w_vkCreateViSurfaceNN(CPU& c) {  // (instance, const VkViSurfaceCreateInfoNN*, alloc, VkSurfaceKHR*)
     auto* vi = reinterpret_cast<const VkViSurfaceCreateInfoNN*>(c.x[1]);
-    uint64_t s = 0;
-    auto r = VkResult(plat::vulkan_create_surface(arg<VkInstance>(c.x[0]), vi->window, &s,
+    uint64_t s = 0, generation = 0;
+    void* window = plat::create_window(generation);
+    auto r = VkResult(plat::vulkan_create_surface(arg<VkInstance>(c.x[0]), window, &s,
                                                   reinterpret_cast<void*>(host_gipa)));
-    log("vkCreateViSurfaceNN -> %s surface on %p: %d", plat::vulkan_surface_extension(), vi->window, r);
+    log("vkCreateViSurfaceNN -> %s surface on %p: %d", plat::vulkan_surface_extension(), window, r);
     if (r == VK_SUCCESS) {
         uint64_t game = g_next_handle++;
         st<uint64_t>(c.x[3], game);
-        // The window came from nn::vi::GetNativeWindow (a reference the game never gives back): ours now.
-        g_surfaces[game] = {arg<VkInstance>(c.x[0]), vi->window, plat::window_generation(), reinterpret_cast<VkSurfaceKHR>(s)};
+        // The guest has no release API for its nn::vi::GetNativeWindow reference.
+        if (vi->window) plat::release_window(vi->window);
+        g_surfaces[game] = {arg<VkInstance>(c.x[0]), window, generation, reinterpret_cast<VkSurfaceKHR>(s)};
+    } else if (window) {
+        plat::release_window(window);
     }
     c.x[0] = ret_u64(r);
 }
@@ -346,10 +353,12 @@ void w_vkGetPhysicalDeviceSurfacePresentModesKHR(CPU& c) {  // (physical, surfac
 namespace bridge {  // vk_bridge_shared.h
 
 VkPhysicalDevice physical() { return g_physical; }
-VkSurfaceKHR host_surface(uint64_t game) { return nx::vk::host_surface(game); }
-VkSurfaceKHR refresh_host_surface(uint64_t game) {
+VkSurfaceKHR host_surface(uint64_t game, uint64_t* generation) { return nx::vk::host_surface(game, generation); }
+VkSurfaceKHR refresh_host_surface(uint64_t game, uint64_t& generation) {
     auto it = g_surfaces.find(game);
-    return it != g_surfaces.end() && refresh_surface(it->second) ? it->second.host : VK_NULL_HANDLE;
+    if (it == g_surfaces.end() || !refresh_surface(it->second)) return VK_NULL_HANDLE;
+    generation = it->second.generation;
+    return it->second.host;
 }
 uint64_t new_handle() { return g_next_handle++; }
 

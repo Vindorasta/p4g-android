@@ -11,10 +11,10 @@
 namespace nx::vk::bridge {
 
 VkPhysicalDevice physical();               // the GPU the game was given (vkEnumeratePhysicalDevices)
-VkSurfaceKHR host_surface(uint64_t game);  // the host surface behind a game handle, re-made on a new window
+VkSurfaceKHR host_surface(uint64_t game, uint64_t* generation = nullptr);  // the host surface behind a game handle, re-made on a new window
 // The host surface behind a game handle after re-making it if the OS replaced the window; VK_NULL_HANDLE when the
 // handle is unknown or there is no window.
-VkSurfaceKHR refresh_host_surface(uint64_t game);
+VkSurfaceKHR refresh_host_surface(uint64_t game, uint64_t& generation);
 uint64_t new_handle();  // a game-visible surface or swapchain handle (ours, never a host value)
 
 // Two-call enumeration helper: fills the guest array from `all`.

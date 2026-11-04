@@ -7,6 +7,7 @@
 //   <files>/user/...                  saves
 //   <files>/config.txt                optional: resolution=WxH
 #include <aaudio/AAudio.h>
+#include <android/api-level.h>
 #include <android/log.h>
 #include <android/native_window.h>
 #include <android/window.h>
@@ -26,6 +27,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <deque>
 #include <filesystem>
@@ -62,6 +64,8 @@ namespace nx::plat {
 namespace {
 android_app* g_app = nullptr;
 std::string g_root;
+std::mutex g_window_lock;
+std::condition_variable g_window_ready;
 std::atomic<ANativeWindow*> g_window{nullptr};
 std::atomic<uint64_t> g_window_gen{0};  // bumped for every new window
 std::atomic<bool> g_visible{false};
@@ -292,11 +296,18 @@ std::string setting(const std::string& key) {
 
 // The window handed out stays valid for good (we hold a reference): Android destroys the activity's window when
 // the app goes to the background or the screen locks (APP_CMD_TERM_WINDOW), and until then we wait for one.
-void* create_window() {
-    ANativeWindow* w;
-    while (!(w = g_window.load())) sleep_ns(10'000'000);
+void* create_window(uint64_t& generation) {
+    std::unique_lock lock(g_window_lock);
+    g_window_ready.wait(lock, [] { return g_window.load() != nullptr; });
+    ANativeWindow* w = g_window.load();
     ANativeWindow_acquire(w);
+    generation = g_window_gen.load();
     return w;
+}
+
+void* create_window() {
+    uint64_t generation;
+    return create_window(generation);
 }
 
 void release_window(void* w) { ANativeWindow_release(static_cast<ANativeWindow*>(w)); }
@@ -512,14 +523,22 @@ void on_cmd(android_app* app, int32_t cmd) {
     using namespace nx::plat;
     switch (cmd) {
         case APP_CMD_INIT_WINDOW:
-            g_window = app->window;
-            g_window_gen++;
+            {
+                std::lock_guard lock(g_window_lock);
+                g_window = app->window;
+                ++g_window_gen;
+            }
+            g_window_ready.notify_all();
             g_visible = true;
             request_frame_rate(app->window);
             request_immersive();
             break;
         case APP_CMD_TERM_WINDOW:  // the window goes away once this returns
-            g_window = nullptr;
+            {
+                std::lock_guard lock(g_window_lock);
+                g_window = nullptr;
+            }
+            clear_touch_input();
             g_visible = false;
             break;
         case APP_CMD_GAINED_FOCUS:
@@ -529,6 +548,7 @@ void on_cmd(android_app* app, int32_t cmd) {
         case APP_CMD_LOST_FOCUS:
             break;
         case APP_CMD_PAUSE:  // home, app switcher, screen off: the game holds (no window), so does its sound
+            clear_touch_input();
             audio_pause(true);
             break;
         case APP_CMD_RESUME:
@@ -605,12 +625,15 @@ extern "C" JNIEXPORT void ANativeActivity_onCreate(ANativeActivity* activity, vo
 
 // All-files access (Android 11+): needed to read Internal storage/<game title>. Asks for it by opening the system page.
 static bool has_all_files_access(android_app* app) {
+    // On Android 10 the launcher requests the legacy storage permissions.
+    if (android_get_device_api_level() < 30) return true;
     JNIEnv* env = nullptr;
-    app->activity->vm->AttachCurrentThread(&env, nullptr);
+    if (app->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK) return false;
     jclass envc = env->FindClass("android/os/Environment");
-    jmethodID m = env->GetStaticMethodID(envc, "isExternalStorageManager", "()Z");
+    jmethodID m = envc ? env->GetStaticMethodID(envc, "isExternalStorageManager", "()Z") : nullptr;
     bool ok = m && env->CallStaticBooleanMethod(envc, m);
     if (env->ExceptionCheck()) env->ExceptionClear();
+    if (envc) env->DeleteLocalRef(envc);
     return ok;
 }
 
@@ -700,6 +723,8 @@ extern "C" void android_main(android_app* app) {
     gpu_turbo();
     app->onAppCmd = on_cmd;
     app->onInputEvent = on_input;
+    // A permission wait can process INIT_WINDOW before the callback is installed.
+    if (app->window) on_cmd(app, APP_CMD_INIT_WINDOW);
     // NX_SHOW_WHEN_LOCKED=1 (unattended test runs, tools/wonder_phone_course.sh): shown over the lock screen and turning
     // the screen on, as an alarm app; the phone itself stays locked.
     uint32_t flags = AWINDOW_FLAG_KEEP_SCREEN_ON | AWINDOW_FLAG_FULLSCREEN;

@@ -22,7 +22,9 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <bit>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
@@ -73,6 +75,57 @@ struct Latch {
 };
 std::vector<Latch> g_latched;
 constexpr uint64_t kMinHoldNs = 150'000'000;
+
+// P4G consumes button edges. Replay short taps as distinct HID samples even
+// if both Android events arrived between two reads.
+std::array<uint8_t, 64> g_pending_edges{};
+uint64_t g_sampled_buttons = 0;
+uint64_t g_next_button_sample = 0;
+
+bool queue_touch_edges() {
+    static const bool enabled = std::strcmp(nx::game::kInfo.id, "p4g") == 0;
+    return enabled;
+}
+
+uint64_t held_touch_buttons() {
+    uint64_t held = 0;
+    for (const auto& t : g_touches) held |= t.button;
+    return held;
+}
+
+void queue_edges(uint64_t changed) {
+    while (changed) {
+        auto& pending = g_pending_edges[std::countr_zero(changed)];
+        // Bound the backlog. Dropping a press/release pair keeps the final state.
+        if (pending >= 8) --pending;
+        else ++pending;
+        changed &= changed - 1;
+    }
+}
+
+void sample_touch_buttons(uint64_t now) {
+    if (now < g_next_button_sample) return;
+    uint64_t changed = 0;
+    for (size_t bit = 0; bit < g_pending_edges.size(); ++bit) {
+        auto& pending = g_pending_edges[bit];
+        if (!pending) continue;
+        --pending;
+        changed |= uint64_t{1} << bit;
+    }
+    if (changed) {
+        g_sampled_buttons ^= changed;
+        // Keep each state visible to a game frame even if HID is polled more often.
+        g_next_button_sample = now + 33'333'333;
+    }
+}
+
+void reset_touch() {
+    g_touches.clear();
+    g_latched.clear();
+    g_pending_edges.fill(0);
+    g_sampled_buttons = 0;
+    g_next_button_sample = 0;
+}
 
 void release_touch(const Touch& t, uint64_t now) {
     if (t.button && now < t.down_ns + kMinHoldNs) g_latched.push_back({t.button, t.down_ns + kMinHoldNs});
@@ -161,6 +214,11 @@ uint64_t touch_button(float x, float y) {
 
 }  // namespace
 
+void clear_touch_input() {
+    std::lock_guard lock(g_in);
+    reset_touch();
+}
+
 int32_t on_input(android_app* app, AInputEvent* e) {
     std::lock_guard lk(g_in);
     int32_t type = AInputEvent_getType(e);
@@ -239,6 +297,12 @@ int32_t on_input(android_app* app, AInputEvent* e) {
         g_w = float(ANativeWindow_getWidth(w));
         g_h = float(ANativeWindow_getHeight(w));
     }
+    if (kind == AMOTION_EVENT_ACTION_CANCEL) {
+        reset_touch();
+        return 1;
+    }
+    const bool queued = queue_touch_edges();
+    const uint64_t before = queued ? held_touch_buttons() : 0;
     if (kind == AMOTION_EVENT_ACTION_DOWN || kind == AMOTION_EVENT_ACTION_POINTER_DOWN) {
         float x = AMotionEvent_getX(e, index), y = AMotionEvent_getY(e, index);
         g_gamepad = false;
@@ -254,14 +318,13 @@ int32_t on_input(android_app* app, AInputEvent* e) {
             g_touches.push_back({AMotionEvent_getPointerId(e, index), x, y, x, y, left ? kLeftStick : kNoStick,
                                  left ? 0 : touch_button(x, y), now});
         }
-    } else if (kind == AMOTION_EVENT_ACTION_UP || kind == AMOTION_EVENT_ACTION_POINTER_UP ||
-               kind == AMOTION_EVENT_ACTION_CANCEL) {
+    } else if (kind == AMOTION_EVENT_ACTION_UP || kind == AMOTION_EVENT_ACTION_POINTER_UP) {
         int32_t id = AMotionEvent_getPointerId(e, index);
-        const bool all = kind == AMOTION_EVENT_ACTION_UP || kind == AMOTION_EVENT_ACTION_CANCEL;
+        const bool all = kind == AMOTION_EVENT_ACTION_UP;
         g_touches.erase(std::remove_if(g_touches.begin(), g_touches.end(),
                                        [&](const Touch& t) {
                                            if (!all && t.id != id) return false;
-                                           release_touch(t, now);
+                                           if (!queued) release_touch(t, now);
                                            return true;
                                        }),
                         g_touches.end());
@@ -275,6 +338,7 @@ int32_t on_input(android_app* app, AInputEvent* e) {
                 }
         }
     }
+    if (queued) queue_edges(before ^ held_touch_buttons());
     return 1;
 }
 
@@ -283,7 +347,7 @@ bool headless() {  // NX_HEADLESS (platform.h)
     return on;
 }
 
-void read_pad(PadState& p) {
+static void read_pad_impl(PadState& p, bool sample_buttons) {
     std::lock_guard lk(g_in);
     p.buttons |= g_pad_buttons.buttons;
     if (g_pad_buttons.lx || g_pad_buttons.ly) {
@@ -299,6 +363,11 @@ void read_pad(PadState& p) {
     g_latched.erase(std::remove_if(g_latched.begin(), g_latched.end(), [&](const Latch& l) { return now >= l.until_ns; }),
                     g_latched.end());
     for (const auto& l : g_latched) p.buttons |= l.button;
+    const bool queued = queue_touch_edges();
+    if (queued) {
+        if (sample_buttons) sample_touch_buttons(now);
+        p.buttons |= g_sampled_buttons;
+    }
     for (const auto& t : g_touches) {
         float dx = (t.x - t.x0) / radius, dy = (t.y - t.y0) / radius;
         if (t.stick == kLeftStick) {
@@ -314,12 +383,15 @@ void read_pad(PadState& p) {
             float sy = -dy * camera_sens();
             p.rx = int32_t(std::clamp(sx, -1.f, 1.f) * kStickMax);
             p.ry = int32_t(std::clamp(sy, -1.f, 1.f) * kStickMax);
-        } else {
+        } else if (!queued) {
             p.buttons |= t.button;
         }
     }
     input_script(p);  // NX_INPUT_SCRIPT (config.txt): scripted runs on the phone, as on the Mac
 }
+
+void read_pad(PadState& p) { read_pad_impl(p, true); }
+void read_pad_motion(PadState& p) { read_pad_impl(p, false); }
 
 // The drawn layout's buttons (brighter while pressed) and the stick under the thumb; nothing while a controller is
 // in use or for games without a drawn layout.

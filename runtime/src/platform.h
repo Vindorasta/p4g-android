@@ -58,6 +58,14 @@ std::string system_language();
 void* create_window();       // native window handle for the Vulkan surface (HWND / ANativeWindow*), kept alive
 void release_window(void* w);  // done with a handle from create_window
 uint64_t window_generation();  // changes when the OS replaced the window (Android: app back from the background)
+#ifdef __ANDROID__
+void* create_window(uint64_t& generation);  // acquire the window and its generation together
+#else
+inline void* create_window(uint64_t& generation) {
+    generation = window_generation();
+    return create_window();
+}
+#endif
 bool window_minimized();     // no surface to draw to (minimized / app in background)
 void window_size(uint32_t& w, uint32_t& h);  // client size in pixels
 void screen_size(uint32_t& w, uint32_t& h);  // the display's own size, landscape (Android; the window on PC)
@@ -79,6 +87,9 @@ struct PadState {
     int32_t lx = 0, ly = 0, rx = 0, ry = 0;
 };
 void read_pad(PadState& p);  // player 1
+#ifdef __ANDROID__
+void read_pad_motion(PadState& p);  // read the sticks without consuming touch button transitions
+#endif
 // Touch controls to draw over the picture (touch_layout.cpp, platform_android_input.cpp): circles at x, y (0..1
 // across the landscape screen), radius r (a fraction of its height), opacity alpha, and a label drawn in the middle
 // (touch_label(): up to two glyphs of kFont in nvn/nvn_present.cpp; 0 none). 0 where nothing is drawn.

@@ -247,7 +247,11 @@ void populate_sixaxis(uint64_t s) {
 
     // Read current right-stick / gyro inputs to simulate motion aiming (e.g. Darts minigame)
     PadState p{};
+#ifdef __ANDROID__
+    read_pad_motion(p);
+#else
     read_pad(p);
+#endif
     float rx = float(p.rx) / float(kStickMax);
     float ry = float(p.ry) / float(kStickMax);
 

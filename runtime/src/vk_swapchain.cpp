@@ -170,7 +170,7 @@ bool remake(SwapchainInfo& s) {
     s.copied.clear();
     if (s.host_sc) p_vkDestroySwapchainKHR(s.device, s.host_sc, nullptr);
     s.host_sc = VK_NULL_HANDLE;
-    VkSurfaceKHR host = bridge::refresh_host_surface(s.surface);
+    VkSurfaceKHR host = bridge::refresh_host_surface(s.surface, s.generation);
     if (!host) return false;
     s.ci.surface = host;
     s.ci.pQueueFamilyIndices = s.families.empty() ? nullptr : s.families.data();
@@ -188,7 +188,6 @@ bool remake(SwapchainInfo& s) {
         s.ci.imageUsage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     }
     VkResult r = p_vkCreateSwapchainKHR(s.device, &s.ci, nullptr, &s.host_sc);
-    s.generation = plat::window_generation();  // what refresh_host_surface just made the surface for
     s.lost = r != VK_SUCCESS;
     if (r != VK_SUCCESS) {
         log("vk: swapchain re-make failed: %d", r);
@@ -215,7 +214,12 @@ void check_orientation(SwapchainInfo& s) {
 void w_vkCreateSwapchainKHR(CPU& c) {  // (device, const VkSwapchainCreateInfoKHR*, alloc, VkSwapchainKHR*)
     VkSwapchainCreateInfoKHR ci = *reinterpret_cast<const VkSwapchainCreateInfoKHR*>(c.x[1]);
     uint64_t game_surface = reinterpret_cast<uint64_t>(ci.surface);
-    ci.surface = bridge::host_surface(game_surface);
+    uint64_t generation = 0;
+    ci.surface = bridge::host_surface(game_surface, &generation);
+    if (!ci.surface) {
+        c.x[0] = ret_u64(VK_ERROR_SURFACE_LOST_KHR);
+        return;
+    }
     ci.pNext = nullptr;
     if (ci.oldSwapchain)
         if (auto it = g_swapchains.find(reinterpret_cast<uint64_t>(ci.oldSwapchain)); it != g_swapchains.end())
@@ -240,7 +244,7 @@ void w_vkCreateSwapchainKHR(CPU& c) {  // (device, const VkSwapchainCreateInfoKH
         s.ci = ci;
         if (ci.imageSharingMode == VK_SHARING_MODE_CONCURRENT && ci.pQueueFamilyIndices)
             s.families.assign(ci.pQueueFamilyIndices, ci.pQueueFamilyIndices + ci.queueFamilyIndexCount);
-        s.generation = plat::window_generation();
+        s.generation = generation;
         get_host_images(s);
         uint32_t n = uint32_t(s.host.size());
         s.images = s.host;

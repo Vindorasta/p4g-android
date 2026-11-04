@@ -8,6 +8,7 @@
 namespace nx::plat {
 
 ANativeWindow* android_window();                   // platform_android.cpp: the current window, or null
+void clear_touch_input();
 int32_t on_input(android_app*, AInputEvent* e);    // platform_android_input.cpp: the glue's input callback
 
 }  // namespace nx::plat
