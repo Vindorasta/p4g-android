@@ -19,6 +19,7 @@
 #include "nvn_origin.h"
 #include "nvn_ultrawide.h"
 #include "platform.h"
+#include <nx/game.h>
 
 namespace nx::nvn {
 
@@ -530,6 +531,35 @@ bool live_ui_draw(const Targets& t) {
     return t0 && t0->width >= 1280 && t0->format == 0x25 && t.depth && g_state.depth.depth_test;
 }
 
+// P4G draw trace, frame 3601: the scene receives a 30-vertex additive overlay
+// from a separate, full-size render target before it is composited with the HUD.
+// The same fragment shader also draws UI, so match the whole pass signature.
+bool p4g_motion_blur_skipped(const Targets& t, bool indexed, const Cmd& c,
+                             const ShaderInfo& vs, const ShaderInfo* fs) {
+    static const bool off = [] {
+        const char* e = std::getenv("NX_P4G_MOTION_BLUR");
+        return e && std::strcmp(e, "0") == 0 && std::strcmp(game::kInfo.id, "p4g") == 0;
+    }();
+    if (!off || indexed || c.i[1] != 30 || !fs ||
+        fs->hash != "7247e449c951a72f" || vs.hash != "547d293498cbedcf" ||
+        t.color_count != 1 || !t.depth || !g_state.color.blend_enable[0] ||
+        !g_state.depth.depth_test || g_state.depth.depth_write || g_state.depth.depth_func != 8)
+        return false;
+    const BlendTarget& blend = g_state.blend[0];
+    if (blend.src_rgb != 5 || blend.dst_rgb != 2 || blend.src_a != 5 || blend.dst_a != 1 ||
+        blend.eq_rgb != 1 || blend.eq_a != 1 || g_textures.resolved.size() != 1)
+        return false;
+    const Texture* dst = get<Texture>(t.colors[0]);
+    const Texture* src = get<Texture>(g_textures.resolved.front().texture);
+    if (!dst || !src || src == dst || !src->image || !src->image->rendered ||
+        src->format != 0x25 || dst->format != src->format ||
+        src->width != dst->width || src->height != dst->height)
+        return false;
+    static const bool logged = [] { log("p4g: motion blur experiment skipped the scene overlay"); return true; }();
+    (void)logged;
+    return true;
+}
+
 bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, const Cmd& c) {
     g_stats.total++;
     if (g_state.rasterizer_discard || !g_state.render_enable) return false;  // nothing reaches the targets
@@ -573,6 +603,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
     }
     // Textures first: an upload or a layout change cannot happen inside the render pass.
     uint32_t gathered = gather_textures(*shaders);
+    if (p4g_motion_blur_skipped(t, indexed, c, *vs, fs)) return false;
     {   // NX_DUMP_DRAW_TEXTURES=<fs hash>@<draw>: the images the first such draw samples, snapshotted (frames/00000_c00000NN)
         static const char* env = std::getenv("NX_DUMP_DRAW_TEXTURES");
         static int done_count = 0;
