@@ -305,6 +305,7 @@ public class Launcher extends Activity {
             else if (!hasKeys()) pick(PICK_KEYS, "*/*", true);
             else { prefs().edit().remove("p4g_prepared_uri").apply(); prepare(); }
         });
+        addLogsRow(root);
         ScrollView setup = new ScrollView(this);
         setup.addView(root);
         setContentView(setup);
@@ -313,7 +314,10 @@ public class Launcher extends Activity {
 
         for (final Option o : options) {
             if ("RESOLUTION".equals(o.key)) P4gTheme.section(root, t("Imagen y rendimiento", "Display and performance"));
-            if ("NX_TOUCH_SHOW".equals(o.key)) P4gTheme.section(root, t("Controles", "Controls"));
+            if ("NX_TOUCH_SHOW".equals(o.key)) {
+                addLogsRow(root);
+                P4gTheme.section(root, t("Controles", "Controls"));
+            }
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
@@ -617,6 +621,37 @@ public class Launcher extends Activity {
                     (result.backup == null ? "" : "\n\nPrevious saves backed up to: user/" + result.backup));
             });
         }, "P4G-save-import").start();
+    }
+
+    private boolean exportingLogs;
+
+    private void addLogsRow(LinearLayout root) {
+        addRow(root, "Logs", t("Exportar", "Export"), v -> exportLogs());
+    }
+
+    private void exportLogs() {
+        if (exportingLogs) return;
+        exportingLogs = true;
+        Context app = getApplicationContext();
+        Toast.makeText(this, t("Exportando logs…", "Exporting logs…"), Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            String name = null;
+            String error = null;
+            try {
+                name = DiagnosticLogs.export(app);
+            } catch (Exception e) {
+                error = String.valueOf(e.getMessage());
+            }
+            final String file = name;
+            final String failure = error;
+            runOnUiThread(() -> {
+                exportingLogs = false;
+                if (isFinishing() || isDestroyed()) return;
+                if (failure != null) tell(t("No se pudieron exportar los logs", "Could not export logs"), failure);
+                else tell(t("Logs exportados", "Logs exported"),
+                        Lang.f("Guardados en Descargas/%s.", "Saved to Downloads/%s.", file));
+            });
+        }, "P4G-log-export").start();
     }
 
     void exportSaves() {
