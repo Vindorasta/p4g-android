@@ -70,13 +70,27 @@ public class AppFlowTest {
         check(new String(Files.readAllBytes(new File(SaveFiles.saveDir(), "data0002.bin").toPath()), "UTF-8").equals("folder save"));
         check(Arrays.equals(before, Files.readAllBytes(existing.toPath()))); // Slots not imported stay intact.
 
-        System.setProperty("p4g.test.fail-file", "data0001.binslot");
+        File slot = new File(SaveFiles.saveDir(), "data0001.binslot");
+        Files.delete(slot.toPath());
+        Files.createDirectory(slot.toPath()); // Cannot replace a directory with a regular save file.
         try {
             SaveFiles.importZip(resolver, android.net.Uri.parse(archive.getPath()));
             throw new AssertionError("Simulated commit failure was ignored");
         } catch (IOException expected) {
             check(Arrays.equals(before, Files.readAllBytes(existing.toPath())));
-        } finally { System.clearProperty("p4g.test.fail-file"); }
+        }
+        Files.delete(slot.toPath());
+        text(slot, "original slot metadata");
+
+        // Simulate termination between the two renames, then reopen.
+        File previous = new File(temp, "user/.save-import-previous");
+        File next = new File(temp, "user/.save-import-next");
+        text(new File(next, "data0001.bin"), "staged");
+        Files.move(SaveFiles.saveDir().toPath(), previous.toPath());
+        SaveFiles.recover();
+        check(Arrays.equals(before, Files.readAllBytes(existing.toPath())));
+        check("original slot metadata".equals(new String(Files.readAllBytes(slot.toPath()), "UTF-8")));
+        check(!previous.exists() && !next.exists());
 
         File runtime = new File(temp, "spirv");
         File marker = new File(runtime, "prepared.tsv");
@@ -93,12 +107,12 @@ public class AppFlowTest {
         bytes(packed, new byte[20]); check(!PreparationFiles.ready(runtime));
         bytes(packed, spv()); text(new File(runtime, "failed.txt"), "translation error");
         check("translation error".equals(PreparationFiles.failure(runtime)));
-        check(!PreparationFiles.ready(runtime)); Files.delete(new File(runtime, "failed.txt").toPath());
+        check(PreparationFiles.ready(runtime)); Files.delete(new File(runtime, "failed.txt").toPath());
         text(marker, "format\told-cache\n"); check(!PreparationFiles.ready(runtime));
         text(marker, PreparationFiles.FORMAT + "\n"); check(PreparationFiles.ready(runtime));
-        // Invalid newly encountered modules are detected even without a seed entry.
+        // A damaged runtime module is retried on use, independently of preparation.
         bytes(new File(runtime, "fedcba9876543210.spv"), new byte[20]);
-        check(!PreparationFiles.ready(runtime));
+        check(PreparationFiles.ready(runtime));
         System.out.println("PASS: actual ZIP/folder import, backup, round trip, rollback, save paths and preparation readiness");
     }
 }

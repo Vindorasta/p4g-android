@@ -40,16 +40,8 @@ public class DocumentsContract {
  public static android.net.Uri buildDocumentUriUsingTree(android.net.Uri u,String id){return android.net.Uri.parse(id);}
  public static android.net.Uri buildChildDocumentsUriUsingTree(android.net.Uri u,String id){return android.net.Uri.parse(id);}
 }''',
-    "android/util/AtomicFile.java": '''package android.util;
-public class AtomicFile {
- private final java.io.File file; public AtomicFile(java.io.File f){file=f;}
- public java.io.FileOutputStream startWrite() throws java.io.IOException {
-  if(file.getName().equals(System.getProperty("p4g.test.fail-file"))) throw new java.io.IOException("simulated write error");
-  return new java.io.FileOutputStream(file);
- }
- public void finishWrite(java.io.FileOutputStream out) throws java.io.IOException {out.close();}
- public void failWrite(java.io.FileOutputStream out) {try {out.close();}catch(java.io.IOException e){}}
-}''',
+    "android/util/Log.java": '''package android.util;
+public class Log {public static int w(String tag,String message,Throwable error){return 0;}}''',
     PACKAGE + "/Launcher.java": '''package io.github.p4grecomp;
 final class Launcher {static java.io.File dataDir(){return new java.io.File(System.getProperty("p4g.test.root"));}}''',
 }
