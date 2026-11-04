@@ -205,6 +205,9 @@ public class Launcher extends Activity {
                 new String[] {"30 FPS", "60 FPS"}, new String[] {"30 FPS", "60 FPS"}, 0));
         options.add(new Option("NX_SHOW_FPS", "Contador de FPS", "FPS counter", new String[] {"0", "1"},
                 new String[] {"Desactivado", "Activado"}, new String[] {"Off", "On"}, 0));
+        options.add(new Option("NX_P4G_MOTION_BLUR", "Desenfoque de movimiento (experimental)",
+                "Motion blur (experimental)", new String[] {"1", "0"},
+                new String[] {"Activado", "Desactivado"}, new String[] {"On", "Off"}, 0));
         options.add(new Option("NX_TOUCH_SHOW", "Controles táctiles", "On-screen controls", new String[] {"1", "0"},
                 new String[] {"Activados", "Desactivados"}, new String[] {"On", "Off"}, 0));
         options.add(new Option("NX_TOUCH_SIZE", "Tamaño de los botones", "Button size",
