@@ -282,6 +282,19 @@ endif()
 
 # Persona 4 Golden Android - Native Importer
 if(ANDROID AND NX_GAME STREQUAL "p4g")
+    # Driver loader and hooks from P5R Android v0.5.3 (BSD-2-Clause).
+    block(SCOPE_FOR VARIABLES)
+        set(BUILD_SHARED_LIBS OFF)
+        set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+        add_subdirectory(third_party/libadrenotools adrenotools EXCLUDE_FROM_ALL)
+    endblock()
+    target_link_libraries(${NX_GAME} PRIVATE adrenotools)
+    add_dependencies(${NX_GAME} hook_impl main_hook file_redirect_hook gsl_alloc_hook)
+    target_compile_definitions(${NX_GAME} PRIVATE NX_CUSTOM_DRIVER=1)
+    foreach(hook IN ITEMS hook_impl main_hook file_redirect_hook gsl_alloc_hook)
+        target_link_options(${hook} PRIVATE -Wl,-z,max-page-size=16384)
+    endforeach()
+
     add_library(p4gimport SHARED
         games/p4g/import/p4g_import_jni.cpp
         runtime/src/nvn/nvn_local_shader.cpp

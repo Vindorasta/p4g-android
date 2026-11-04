@@ -47,3 +47,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+
+## libadrenotools and linkernsbypass
+
+The custom Vulkan loader is adapted from [P5R Android v0.5.3](https://github.com/Brandon04Gonzalez/p5r-android/tree/v0.5.3). The vendored source and original license notices are under [third_party/libadrenotools](third_party/libadrenotools).
