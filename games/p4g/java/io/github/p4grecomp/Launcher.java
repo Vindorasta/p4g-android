@@ -211,6 +211,9 @@ public class Launcher extends Activity {
         options.add(new Option("NX_P4G_MOTION_BLUR", "Desenfoque de movimiento (experimental)",
                 "Motion blur (experimental)", new String[] {"1", "0"},
                 new String[] {"Activado", "Desactivado"}, new String[] {"On", "Off"}, 0));
+        options.add(new Option("NX_LOD_BIAS", "Nitidez de texturas 3D (experimental)",
+                "3D texture sharpness (experimental)", new String[] {"0", "-0.5"},
+                new String[] {"Original", "Más nítidas"}, new String[] {"Original", "Sharper"}, 0));
         options.add(new Option("NX_TOUCH_SHOW", "Controles táctiles", "On-screen controls", new String[] {"1", "0"},
                 new String[] {"Activados", "Desactivados"}, new String[] {"On", "Off"}, 0));
         options.add(new Option("NX_TOUCH_SIZE", "Tamaño de los botones", "Button size",
@@ -764,7 +767,7 @@ public class Launcher extends Activity {
             config.put("NX_RENDER_RES", "1280x720");
             config.put("NX_RES", "720p");
         }
-        for (String k : new String[] {"RENDER_SCALE", "NX_ANISO_MAX", "NX_LOD_BIAS"}) config.remove(k);
+        for (String k : new String[] {"RENDER_SCALE", "NX_ANISO_MAX"}) config.remove(k);
         for (String key : new String[] {"language", "GRAPHICS", "NX_GAMEPAD_LAYOUT"}) config.remove(key);
         writeConfig(new File(dataDir(), "config.txt"), config);
     }
