@@ -40,6 +40,11 @@ if ($Nce -and ($Game -eq "p5r" -or $Game -eq "p4g")) {
     $targets += $importLib
     $extraLibs += @("$build\lib$importLib.so", $harness)
 }
+if ($Game -eq "p4g") {
+    foreach ($hook in @("hook_impl", "main_hook", "file_redirect_hook", "gsl_alloc_hook")) {
+        $extraLibs += "$build\adrenotools\src\hook\lib$hook.so"
+    }
+}
 cmake --build $build --target @targets
 if ($LASTEXITCODE) { throw "native build failed" }
 
@@ -101,6 +106,10 @@ if (Test-Path $java) {
     & "$bt\d8.bat" --release --min-api 30 --lib $jar --output "$out\dex" @classes
     if ($LASTEXITCODE) { throw "d8 failed" }
     [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($apk, "$out\dex\classes.dex", "classes.dex", "Optimal") | Out-Null
+}
+if ($Game -eq "p4g") {
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($apk, "$root\third_party\libadrenotools\LICENSE", "assets/licenses/libadrenotools.txt", "Optimal") | Out-Null
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($apk, "$root\third_party\libadrenotools\lib\linkernsbypass\LICENSE", "assets/licenses/linkernsbypass.txt", "Optimal") | Out-Null
 }
 $apk.Dispose()
 
