@@ -27,6 +27,8 @@ jobs:
           "$RUNNER_TEMP/nvn-frame-pacing-test"
           c++ -std=c++17 -Wall -Wextra -Werror -I runtime/src tests/android_surface_size_test.cpp -o "$RUNNER_TEMP/android-surface-size-test"
           "$RUNNER_TEMP/android-surface-size-test"
+          c++ -std=c++17 -Wall -Wextra -Werror -I runtime/src tests/input_stick_test.cpp -o "$RUNNER_TEMP/input-stick-test"
+          "$RUNNER_TEMP/input-stick-test"
           c++ -std=c++17 -Wall -Wextra -Werror -I games/p4g/import tests/p4g_maxwell_test.cpp -o "$RUNNER_TEMP/p4g-maxwell-test"
           "$RUNNER_TEMP/p4g-maxwell-test"
 
