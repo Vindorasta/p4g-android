@@ -1,6 +1,6 @@
 # P4G — Persona 4 Golden for Android
 
-**0.3.1 Beta** · ARM64 · Vulkan · English app interface
+**0.3.2 Beta** · ARM64 · Vulkan · English app interface
 
 P4G is an unofficial Android port of the Nintendo Switch version of **Persona 4 Golden**. It uses native ARM64 execution and a compatibility runtime that translates the game's NVN graphics commands to Vulkan.
 
@@ -76,6 +76,9 @@ Back up your saves before updating. If Android rejects the update, check that bo
 | Touch camera sensitivity | Adjust touch camera sensitivity. |
 | Controls position | Open the touch control layout editor. |
 | Saves | Import or export save backups. |
+| Disable motion blur (experimental) | Off by default. Turn On to disable the matched motion-blur effect. |
+| GPU driver | Import, select and delete saved Turnip or PanVK drivers, or select System driver. |
+| Mods and translations | List installed files, enable or disable mods and inspect file conflicts. |
 | Translation / CPK mod | Import a translation or replacement CPK package. |
 | Play | Start the game. |
 
@@ -112,13 +115,9 @@ The importer copies save files; it does **not** convert save formats. Use a back
 
 ## Translation and CPK mods
 
-Use **Translation / CPK mod → Import CPK** to install a package. The current importer writes it to:
+Use **Translation / CPK mod → Import CPK** to install a package with its original filename, such as `data_e.cpk`, under `Persona 4 Golden/mods/translation/romfs/`. Importing the same filename replaces that file. Use a package intended for the supported game revision.
 
-```text
-Persona 4 Golden/mods/translation/romfs/CPK/PATCH1.CPK
-```
-
-Importing another CPK replaces that file. Use a package intended for the supported game revision.
+Open **Mods and translations → Manage** to inspect files, enable or disable mods and view conflicts. The last active folder in alphabetical order takes priority for overlapping files. Importing into a disabled translation keeps it disabled until you enable it in the manager. Changes apply the next time you open the game.
 
 ## Exiting a game
 
@@ -147,7 +146,7 @@ Do not attach game dumps or encryption keys to public bug reports.
 2. Configure the repository secrets `P4G_SIGNING_KEY_B64` and `P4G_SIGNING_PASSWORD` required by `.github/workflows/build-p4g.yml`.
 3. Open **Actions → P4G Beta → Run workflow**.
 4. Wait for a successful build.
-5. Download the **P4G-0.3.1-Beta** artifact and extract **P4G.apk**.
+5. Download the **P4G-0.3.2-Beta** artifact and extract **P4G.apk**.
 
 The workflow builds the native runtime and preparation libraries, compiles the Java interface, runs the included checks and packages the APK. A successful build does not replace testing on an Android device.
 
