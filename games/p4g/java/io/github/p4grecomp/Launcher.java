@@ -834,23 +834,19 @@ public class Launcher extends Activity {
 
     int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 
-    private static final String[] CPK_TARGETS = {"data.cpk", "sysdat.cpk", "data_movie.cpk"};
     private boolean importingCpk;
 
     void importCpk(Uri uri) {
         if (importingCpk) return;
         String name = displayName(uri);
-        for (String target : CPK_TARGETS) {
-            if (target.equalsIgnoreCase(name)) {
-                installCpk(uri, target);
-                return;
-            }
+        if (name == null || name.length() <= 4 || !name.toLowerCase(Locale.ROOT).endsWith(".cpk")
+                || name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.indexOf('\0') >= 0) {
+            tell(t("Error al importar CPK", "Could not import CPK"),
+                    t("Selecciona un archivo .cpk con su nombre original.",
+                            "Select a .cpk file with its original filename."));
+            return;
         }
-        new AlertDialog.Builder(this)
-                .setTitle(t("¿Qué archivo sustituye el mod?", "Which game file does the mod replace?"))
-                .setItems(CPK_TARGETS, (dialog, index) -> installCpk(uri, CPK_TARGETS[index]))
-                .setNegativeButton(t("Cancelar", "Cancel"), null)
-                .show();
+        installCpk(uri, name);
     }
 
     private void installCpk(Uri uri, String target) {
@@ -879,7 +875,7 @@ public class Launcher extends Activity {
     }
 
     private void copyCpk(Uri uri, String target) throws IOException {
-        // app0:/data.cpk, app0:/sysdat.cpk and app0:/data_movie.cpk are at the RomFS root.
+        // Preserve the original RomFS filename, including language archives such as data_e.cpk.
         File romfs = new File(dataDir(), "mods/translation/romfs");
         if (!romfs.isDirectory() && !romfs.mkdirs()) throw new IOException("Could not create the mod folder.");
         File staged = File.createTempFile(".import-", ".tmp", romfs);
