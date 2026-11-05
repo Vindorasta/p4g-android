@@ -259,6 +259,11 @@ public class Launcher extends Activity {
     boolean readyForPlay;
     int refreshGeneration;
 
+    @Override protected void onDestroy() {
+        if (modManager != null) modManager.dismiss();
+        super.onDestroy();
+    }
+
     void build(boolean ready) {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -319,6 +324,7 @@ public class Launcher extends Activity {
         });
         addDriverRow(root);
         addLogsRow(root);
+        addModsRow(root);
         ScrollView setup = new ScrollView(this);
         setup.addView(root);
         setContentView(setup);
@@ -458,6 +464,7 @@ public class Launcher extends Activity {
             }
         });
         root.addView(transRow);
+        addModsRow(root);
 
         play = new Button(this);
         play.setTextSize(20);
@@ -486,7 +493,7 @@ public class Launcher extends Activity {
     }
 
     void launchAfterShaderInstall() {
-        if (importingSaves || importingCpk || importingDriver) return;
+        if (importingSaves || importingCpk || importingDriver || (modManager != null && modManager.busy())) return;
         if (!readyForPlay || !gameReadable() || !hasKeys()) { refresh(); return; }
         try { SaveFiles.recover(); }
         catch (IOException e) { tell("Save recovery failed", String.valueOf(e.getMessage())); return; }
@@ -835,6 +842,16 @@ public class Launcher extends Activity {
     int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 
     private boolean importingCpk;
+    private ModManager modManager;
+
+    private void addModsRow(LinearLayout root) {
+        addRow(root, "Mods and translations", "Manage", v -> {
+            if (!hasAccess()) { askAccess(); return; }
+            if (importingCpk) return;
+            if (modManager == null) modManager = new ModManager(this);
+            modManager.show();
+        });
+    }
 
     void importCpk(Uri uri) {
         if (importingCpk) return;
@@ -855,18 +872,22 @@ public class Launcher extends Activity {
         Toast.makeText(this, t("Importando CPK…", "Importing CPK…"), Toast.LENGTH_SHORT).show();
         new Thread(() -> {
             String error = null;
+            String installed = null;
             try {
-                copyCpk(uri, target);
+                installed = copyCpk(uri, target);
             } catch (Exception e) {
                 error = String.valueOf(e.getMessage());
             }
             final String failure = error;
+            final String installedPath = installed;
             runOnUiThread(() -> {
                 importingCpk = false;
                 if (isFinishing() || isDestroyed()) return;
                 if (failure == null) {
-                    tell(t("CPK instalado", "CPK installed"), "mods/translation/romfs/" + target
-                            + t("\nSe aplica al volver a abrir el juego.", "\nApplied the next time you open the game."));
+                    tell(t("CPK instalado", "CPK installed"), installedPath
+                            + (installedPath.startsWith("mods/_translation/")
+                                ? "\nEnable translation in Mods and translations to apply it."
+                                : t("\nSe aplica al volver a abrir el juego.", "\nApplied the next time you open the game.")));
                 } else {
                     tell(t("Error al importar CPK", "Could not import CPK"), failure);
                 }
@@ -874,26 +895,29 @@ public class Launcher extends Activity {
         }, "P4G-cpk-import").start();
     }
 
-    private void copyCpk(Uri uri, String target) throws IOException {
-        // Preserve the original RomFS filename, including language archives such as data_e.cpk.
-        File romfs = new File(dataDir(), "mods/translation/romfs");
-        if (!romfs.isDirectory() && !romfs.mkdirs()) throw new IOException("Could not create the mod folder.");
-        File staged = File.createTempFile(".import-", ".tmp", romfs);
-        try {
-            InputStream stream = getContentResolver().openInputStream(uri);
-            if (stream == null) throw new IOException("Could not open the selected file.");
-            try (DataInputStream in = new DataInputStream(stream);
-                 FileOutputStream out = new FileOutputStream(staged)) {
-                int magic = in.readInt();
-                if (magic != 0x43504B20) throw new IOException("The selected file is not a CRI CPK archive.");
-                out.write(new byte[] {'C', 'P', 'K', ' '});
-                SaveFiles.copy(in, out);
-                out.getFD().sync();
+    private String copyCpk(Uri uri, String target) throws IOException {
+        synchronized (ModFiles.class) {
+            // Preserve the original RomFS filename, including language archives such as data_e.cpk.
+            File romfs = ModFiles.translationRomfs(dataDir());
+            if (!romfs.isDirectory() && !romfs.mkdirs()) throw new IOException("Could not create the mod folder.");
+            File staged = File.createTempFile(".import-", ".tmp", romfs);
+            try {
+                InputStream stream = getContentResolver().openInputStream(uri);
+                if (stream == null) throw new IOException("Could not open the selected file.");
+                try (DataInputStream in = new DataInputStream(stream);
+                     FileOutputStream out = new FileOutputStream(staged)) {
+                    int magic = in.readInt();
+                    if (magic != 0x43504B20) throw new IOException("The selected file is not a CRI CPK archive.");
+                    out.write(new byte[] {'C', 'P', 'K', ' '});
+                    SaveFiles.copy(in, out);
+                    out.getFD().sync();
+                }
+                Files.move(staged.toPath(), new File(romfs, target).toPath(),
+                        StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                return dataDir().toPath().relativize(new File(romfs, target).toPath()).toString().replace(File.separatorChar, '/');
+            } finally {
+                if (staged.exists() && !staged.delete()) Log.w("P4G-Launch", "Could not remove staged CPK");
             }
-            Files.move(staged.toPath(), new File(romfs, target).toPath(),
-                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } finally {
-            if (staged.exists() && !staged.delete()) Log.w("P4G-Launch", "Could not remove staged CPK");
         }
     }
 
