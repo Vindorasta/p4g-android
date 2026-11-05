@@ -27,6 +27,7 @@ struct Symbol {
     uint8_t type;
     uint8_t bind;
     uint8_t imported;
+    bool module_relative = false;  // NSO dynamic relocation boundary resolved within this module
 };
 
 struct ModuleInfo {
