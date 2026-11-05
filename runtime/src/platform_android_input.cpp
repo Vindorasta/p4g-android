@@ -45,6 +45,7 @@
 #include "kernel.h"
 #include "platform.h"
 #include "platform_android.h"
+#include "input_stick.h"
 #include "touch_layout.h"
 
 // Android input: game controllers and touch (split from platform_android.cpp).
@@ -82,8 +83,12 @@ std::array<uint8_t, 64> g_pending_edges{};
 uint64_t g_sampled_buttons = 0;
 uint64_t g_next_button_sample = 0;
 
-bool queue_touch_edges() {
-    static const bool enabled = std::strcmp(nx::game::kInfo.id, "p4g") == 0;
+bool p4g_input() {
+    static const bool enabled = [] {
+        const bool p4g = std::strcmp(nx::game::kInfo.id, "p4g") == 0;
+        if (p4g) nx::log("hid: P4G radial left-stick mapping enabled (outer radius 0.98)");
+        return p4g;
+    }();
     return enabled;
 }
 
@@ -264,8 +269,15 @@ int32_t on_input(android_app* app, AInputEvent* e) {
             float scaled = (v - sign * kDeadzone) / (1.f - kDeadzone);
             return int32_t(std::clamp(scaled, -1.f, 1.f) * kStickMax);
         };
-        g_pad_buttons.lx = axis(AMOTION_EVENT_AXIS_X);
-        g_pad_buttons.ly = -axis(AMOTION_EVENT_AXIS_Y);
+        if (p4g_input()) {
+            const StickPosition left = radial_stick(AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_X, 0),
+                    -AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_Y, 0), 0.12f, 0.98f);
+            g_pad_buttons.lx = left.x;
+            g_pad_buttons.ly = left.y;
+        } else {
+            g_pad_buttons.lx = axis(AMOTION_EVENT_AXIS_X);
+            g_pad_buttons.ly = -axis(AMOTION_EVENT_AXIS_Y);
+        }
         int32_t rx = axis(AMOTION_EVENT_AXIS_Z);
         if (!rx) rx = axis(AMOTION_EVENT_AXIS_RX);
         int32_t ry = -axis(AMOTION_EVENT_AXIS_RZ);
@@ -302,7 +314,7 @@ int32_t on_input(android_app* app, AInputEvent* e) {
         reset_touch();
         return 1;
     }
-    const bool queued = queue_touch_edges();
+    const bool queued = p4g_input();
     const uint64_t before = queued ? held_touch_buttons() : 0;
     if (kind == AMOTION_EVENT_ACTION_DOWN || kind == AMOTION_EVENT_ACTION_POINTER_DOWN) {
         float x = AMotionEvent_getX(e, index), y = AMotionEvent_getY(e, index);
@@ -364,7 +376,7 @@ static void read_pad_impl(PadState& p, bool sample_buttons) {
     g_latched.erase(std::remove_if(g_latched.begin(), g_latched.end(), [&](const Latch& l) { return now >= l.until_ns; }),
                     g_latched.end());
     for (const auto& l : g_latched) p.buttons |= l.button;
-    const bool queued = queue_touch_edges();
+    const bool queued = p4g_input();
     if (queued) {
         if (sample_buttons) sample_touch_buttons(now);
         p.buttons |= g_sampled_buttons;
@@ -374,8 +386,14 @@ static void read_pad_impl(PadState& p, bool sample_buttons) {
         if (t.stick == kLeftStick) {
             float sx = dx * stick_sens();
             float sy = -dy * stick_sens();
-            p.lx = int32_t(std::clamp(sx, -1.f, 1.f) * kStickMax);
-            p.ly = int32_t(std::clamp(sy, -1.f, 1.f) * kStickMax);
+            if (p4g_input()) {
+                const StickPosition left = radial_stick(sx, sy, 0.f, 0.98f);
+                p.lx = left.x;
+                p.ly = left.y;
+            } else {
+                p.lx = int32_t(std::clamp(sx, -1.f, 1.f) * kStickMax);
+                p.ly = int32_t(std::clamp(sy, -1.f, 1.f) * kStickMax);
+            }
             // A drawn layout's stick pushed nearly all the way may hold a button too (Wonder: Y, dash), so running
             // needs no second thumb on the right side.
             if (drawn && std::abs(dx) > 0.85f) p.buttons |= touch_stick_full_button();
