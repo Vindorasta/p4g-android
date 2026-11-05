@@ -59,7 +59,9 @@ with tempfile.TemporaryDirectory(prefix="p4g-java-tests-", dir=test_temp) as fol
         file.write_text(code, encoding="utf-8")
         sources.append(str(file))
     sources += [str(ROOT / "games/p4g/java" / PACKAGE / name) for name in
-                ("SaveFiles.java", "SavePaths.java", "PreparationFiles.java")]
+                ("SaveFiles.java", "SavePaths.java", "PreparationFiles.java", "ModFiles.java")]
     sources.append(str(ROOT / "tests/AppFlowTest.java"))
+    sources.append(str(ROOT / "tests/ModFilesTest.java"))
     subprocess.run(["javac", "-encoding", "UTF-8", "--release", "8", "-d", str(temp / "classes"), *sources], check=True)
     subprocess.run(["java", "-Djava.io.tmpdir=" + str(temp), "-cp", str(temp / "classes"), "io.github.p4grecomp.AppFlowTest"], check=True)
+    subprocess.run(["java", "-Djava.io.tmpdir=" + str(temp), "-cp", str(temp / "classes"), "io.github.p4grecomp.ModFilesTest"], check=True)
