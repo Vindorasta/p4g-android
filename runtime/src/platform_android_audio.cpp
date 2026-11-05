@@ -25,12 +25,14 @@
 #include <atomic>
 #include <cerrno>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #define VK_NO_PROTOTYPES
@@ -51,21 +53,24 @@ namespace nx::plat {
 
 namespace {
 // The game's buffers are copied into a ring at submit and played from there. Each is handed back (done) when the
-// device's read position reaches its end minus the A/V delay: with no delay, when it has played (as before); with a
-// delay of D, D earlier, so the game queues D more sound ahead and what it mixes reaches the speaker D later, while
-// its own audio clock keeps real time (audio_set_delay_ms, set from the frame rate: nvn_queue.cpp).
+// device's read position reaches its end minus the A/V delay and a small burst-dependent reserve. Returning copied
+// buffers early lets a game with three 5 ms buffers supply a device that pulls 20 ms at once. Once that reserve is
+// filled, completions follow the device clock (audio_set_delay_ms, set from the frame rate: nvn_queue.cpp).
 constexpr uint64_t kRingFrames = 1 << 16;  // ~1.4 s of 48 kHz stereo s16
 struct Pending {
     uint64_t end;  // ring position (frames) after its last frame
     void* ctx;
 };
 std::mutex g_audio;
+std::condition_variable g_audio_ready;
 std::vector<uint32_t> g_ring(kRingFrames);  // one stereo s16 frame per element
 uint64_t g_written = 0, g_read = 0;         // frames, since the stream opened
 uint64_t g_device = 0;                      // frames the callback gave the device (silence included): AAudio's count
 std::atomic<uint64_t> g_latency_ns{0};      // audio_latency_ns
 std::deque<Pending> g_pending;
 std::atomic<uint32_t> g_delay_frames{0};
+uint32_t g_reserve_frames = 480;  // under g_audio; normally two bursts, capped at half the ring
+bool g_priming = true;
 AudioDone g_done = nullptr;
 AAudioStream* g_stream = nullptr;
 // Per ~2 s, logged from the callback: how the device pulls (callbacks, frames per call) and how often the game's
@@ -74,6 +79,28 @@ struct CbStats {
     uint64_t from_ns = 0, calls = 0, frames = 0, underruns = 0, silent_frames = 0, max_gap_ns = 0, last_ns = 0;
     int32_t min_frames = 1 << 30, max_frames = 0;
 } g_cb;
+
+uint32_t reserve_for_burst(uint64_t frames) {
+    return uint32_t(std::clamp<uint64_t>(frames * 2, 480, kRingFrames / 2));
+}
+
+// Completion callbacks can take the guest audio or renderer locks. Keep them on a worker, including completions
+// made possible by audio_submit(), so a renderer submitting while holding its own lock cannot deadlock itself.
+void audio_completions() {
+    for (;;) {
+        void* ctx;
+        {
+            std::unique_lock lk(g_audio);
+            g_audio_ready.wait(lk, [] {
+                const uint64_t due = g_read + g_reserve_frames + g_delay_frames.load(std::memory_order_relaxed);
+                return !g_pending.empty() && g_pending.front().end <= due;
+            });
+            ctx = g_pending.front().ctx;
+            g_pending.pop_front();
+        }
+        g_done(ctx);
+    }
+}
 
 void cb_stats(int32_t frames, size_t missing_bytes) {
     CbStats& s = g_cb;
@@ -95,25 +122,25 @@ void cb_stats(int32_t frames, size_t missing_bytes) {
 }
 
 aaudio_data_callback_result_t audio_cb(AAudioStream*, void*, void* out, int32_t frames) {
+    if (frames <= 0) return AAUDIO_CALLBACK_RESULT_CONTINUE;
     auto* dst = static_cast<uint32_t*>(out);
     size_t missing = 0;
-    std::vector<void*> finished;
     {
         std::lock_guard lk(g_audio);
-        const uint64_t n = std::min<uint64_t>(uint64_t(frames), g_written - g_read);
+        // AAudio's callback size may change or exceed the nominal hardware burst.
+        g_reserve_frames = std::max(g_reserve_frames, reserve_for_burst(uint64_t(frames)));
+        const uint64_t available = g_written - g_read;
+        if (g_priming && available >= g_reserve_frames) g_priming = false;
+        const uint64_t n = g_priming ? 0 : std::min<uint64_t>(uint64_t(frames), available);
         for (uint64_t k = 0; k < n; k++) dst[k] = g_ring[(g_read + k) % kRingFrames];
         g_read += n;
         g_device += uint64_t(frames);
         missing = size_t(frames) - size_t(n);
         if (missing) std::memset(dst + n, 0, missing * 4);  // underrun: silence
-        const uint64_t due = g_read + g_delay_frames.load(std::memory_order_relaxed);
-        while (!g_pending.empty() && g_pending.front().end <= due) {
-            finished.push_back(g_pending.front().ctx);
-            g_pending.pop_front();
-        }
+        if (missing) g_priming = true;
     }
+    g_audio_ready.notify_one();
     cb_stats(frames, missing * 4);
-    for (void* c : finished) g_done(c);
     return AAUDIO_CALLBACK_RESULT_CONTINUE;
 }
 }  // namespace
@@ -129,13 +156,28 @@ bool audio_open(AudioDone done) {
     AAudioStreamBuilder_setSampleRate(b, 48000);
     AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
     AAudioStreamBuilder_setDataCallback(b, audio_cb, nullptr);
-    bool ok = AAudioStreamBuilder_openStream(b, &g_stream) == AAUDIO_OK && AAudioStream_requestStart(g_stream) == AAUDIO_OK;
+    bool ok = AAudioStreamBuilder_openStream(b, &g_stream) == AAUDIO_OK;
     AAudioStreamBuilder_delete(b);
-    if (ok)
-        nx::log("audio: AAudio stream: %d frames per burst, buffer %d of %d frames, performance mode %d",
-                int(AAudioStream_getFramesPerBurst(g_stream)), int(AAudioStream_getBufferSizeInFrames(g_stream)),
-                int(AAudioStream_getBufferCapacityInFrames(g_stream)), int(AAudioStream_getPerformanceMode(g_stream)));
-    return ok;
+    if (!ok) { g_stream = nullptr; return false; }
+    const int32_t burst = AAudioStream_getFramesPerBurst(g_stream);
+    {
+        std::lock_guard lk(g_audio);
+        g_reserve_frames = reserve_for_burst(uint64_t(std::max(burst, 1)));
+        g_priming = true;
+    }
+    if (AAudioStream_requestStart(g_stream) != AAUDIO_OK) {
+        AAudioStream_close(g_stream);
+        g_stream = nullptr;
+        return false;
+    }
+    std::thread(audio_completions).detach();
+    nx::log("audio: AAudio stream: %d frames per burst, buffer %d of %d frames, performance mode %d",
+            int(burst), int(AAudioStream_getBufferSizeInFrames(g_stream)),
+            int(AAudioStream_getBufferCapacityInFrames(g_stream)), int(AAudioStream_getPerformanceMode(g_stream)));
+    nx::log("audio: experimental burst-buffer-v1: %u reserve frames (%.1f ms), completion worker enabled",
+            reserve_for_burst(uint64_t(std::max(burst, 1))),
+            double(reserve_for_burst(uint64_t(std::max(burst, 1)))) / 48.0);
+    return true;
 }
 
 void audio_pause(bool paused) {
@@ -174,13 +216,20 @@ bool audio_submit(const void* data, size_t bytes, void* ctx) {
         g_written += n;
         g_pending.push_back({g_written, ctx});
     }
+    g_audio_ready.notify_one();
     measure_latency(start, read, device);
     return true;
 }
 
 uint64_t audio_latency_ns() { return g_latency_ns.load(std::memory_order_relaxed); }
 
-void audio_set_delay_ms(uint32_t ms) { g_delay_frames.store(std::min<uint32_t>(ms, 500) * 48, std::memory_order_relaxed); }
+void audio_set_delay_ms(uint32_t ms) {
+    {
+        std::lock_guard lk(g_audio);
+        g_delay_frames.store(std::min<uint32_t>(ms, 500) * 48, std::memory_order_relaxed);
+    }
+    g_audio_ready.notify_one();
+}
 
 uint32_t audio_queued() {
     std::lock_guard lk(g_audio);
