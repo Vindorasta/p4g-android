@@ -436,6 +436,49 @@ static void write_meminfo(uint64_t p, const VmInfo& v) {
     st<uint32_t>(p + 36, 0);
 }
 
+#if NX_NCE
+// Exit diagnostics adapted from P5R Android v0.5.5. Read only tracked guest code or stack.
+static bool exit_readable(uint64_t addr, uint64_t size, MemState state) {
+    const VmInfo region = vm_query(addr);
+    if (region.state != state || !(region.perm & 1) || addr < region.addr) return false;
+    const uint64_t offset = addr - region.addr;
+    return offset < region.size && size <= region.size - offset;
+}
+
+static void log_exit_context(const CPU& c, uint64_t pc) {
+    const uint64_t sp = c.x[31];
+    log("svcExitProcess: pc=%s lr=%s sp=%llx x0=%llx x1=%llx x2=%llx x3=%llx x4=%llx x5=%llx x6=%llx x7=%llx",
+        describe(pc).c_str(), describe(c.x[30]).c_str(), (unsigned long long)sp,
+        (unsigned long long)c.x[0], (unsigned long long)c.x[1], (unsigned long long)c.x[2],
+        (unsigned long long)c.x[3], (unsigned long long)c.x[4], (unsigned long long)c.x[5],
+        (unsigned long long)c.x[6], (unsigned long long)c.x[7]);
+    log("svcExitProcess: x19=%llx x20=%llx x21=%llx x22=%llx x23=%llx x29=%llx",
+        (unsigned long long)c.x[19], (unsigned long long)c.x[20], (unsigned long long)c.x[21],
+        (unsigned long long)c.x[22], (unsigned long long)c.x[23], (unsigned long long)c.x[29]);
+    if (pc >= 8 && exit_readable(pc - 8, 16, kMemCode)) {
+        log("svcExitProcess: insn[-8,-4,0,+4]=%08x,%08x,%08x,%08x",
+            ld<uint32_t>(pc - 8), ld<uint32_t>(pc - 4), ld<uint32_t>(pc), ld<uint32_t>(pc + 4));
+    }
+    for (int i = 0; i < 12; ++i) {
+        const uint64_t addr = sp + uint64_t(i) * 8;
+        if (!exit_readable(addr, 8, kMemStack)) break;
+        const uint64_t value = ld<uint64_t>(addr);
+        log("svcExitProcess: stack[%02d] @%llx = %llx (%s)", i,
+            (unsigned long long)addr, (unsigned long long)value, describe(value).c_str());
+    }
+    uint64_t fp = c.x[29];
+    for (int i = 0; i < 8 && fp >= sp && fp - sp < 0x100000 && !(fp & 15); ++i) {
+        if (!exit_readable(fp, 16, kMemStack)) break;
+        const uint64_t prev = ld<uint64_t>(fp);
+        const uint64_t ret = ld<uint64_t>(fp + 8);
+        log("svcExitProcess: frame[%02d] fp=%llx prev=%llx ret=%s", i,
+            (unsigned long long)fp, (unsigned long long)prev, describe(ret).c_str());
+        if (prev <= fp) break;
+        fp = prev;
+    }
+}
+#endif
+
 static void svc_impl(CPU& c, uint32_t imm, uint64_t pc) {
     if (g_trace) log("svc %#x from %s", imm, describe(pc).c_str());
     uint32_t rc = 0;
@@ -476,7 +519,11 @@ static void svc_impl(CPU& c, uint32_t imm, uint64_t pc) {
             break;
         }
         case 0x07:
+#if NX_NCE
+            log_exit_context(c, pc);
+#else
             log("svcExitProcess");
+#endif
             plat::exit_process(0);
         case 0x08: {  // CreateThread(entry x1, arg x2, stack_top x3, prio w4, core w5) -> handle
             auto t = new_thread(c.x[1], c.x[2], c.x[3], int(c.x[4]), int32_t(c.x[5]));
