@@ -69,7 +69,7 @@ public class Launcher extends Activity {
     final Map<String, String> config = new LinkedHashMap<>();
     TextView status;
     Button play;
-    static final int PICK_ZIP = 1, PICK_FOLDER = 2, PICK_GAME = 3, PICK_KEYS = 4, PREPARE = 6, PICK_CPK = 7, PICK_TURNIP = 8, PICK_PANVK = 9;
+    static final int PICK_ZIP = 1, PICK_FOLDER = 2, PICK_GAME = 3, PICK_KEYS = 4, PREPARE = 6, PICK_CPK = 7, PICK_DRIVER = 8;
 
     String t(String spanish, String english) { return Lang.t(spanish, english); }
 
@@ -261,6 +261,7 @@ public class Launcher extends Activity {
 
     @Override protected void onDestroy() {
         if (modManager != null) modManager.dismiss();
+        if (driverSelector != null) driverSelector.dismiss();
         super.onDestroy();
     }
 
@@ -493,7 +494,8 @@ public class Launcher extends Activity {
     }
 
     void launchAfterShaderInstall() {
-        if (importingSaves || importingCpk || importingDriver || (modManager != null && modManager.busy())) return;
+        if (importingSaves || importingCpk || importingDriver || (modManager != null && modManager.busy())
+                || (driverSelector != null && driverSelector.busy())) return;
         if (!readyForPlay || !gameReadable() || !hasKeys()) { refresh(); return; }
         try { SaveFiles.recover(); }
         catch (IOException e) { tell("Save recovery failed", String.valueOf(e.getMessage())); return; }
@@ -597,6 +599,11 @@ public class Launcher extends Activity {
             refresh();
             return;
         }
+        if (request == PICK_DRIVER) {
+            if (result == RESULT_OK && data != null && data.getData() != null) importDriver(data.getData());
+            else showDrivers();
+            return;
+        }
         if (result != RESULT_OK || data == null) return;
         if (request == PICK_KEYS) {
             onKeysPicked(data);
@@ -607,10 +614,6 @@ public class Launcher extends Activity {
         if (request == PICK_GAME) {
             onGamePicked(data.getData());
             refresh();
-            return;
-        }
-        if (request == PICK_TURNIP || request == PICK_PANVK) {
-            importDriver(data.getData(), request == PICK_PANVK);
             return;
         }
         if (request == PICK_CPK) {
@@ -649,33 +652,19 @@ public class Launcher extends Activity {
     }
 
     private boolean importingDriver;
+    private DriverSelector driverSelector;
 
     private void addDriverRow(LinearLayout root) {
-        addRow(root, t("Driver gráfico", "GPU driver"), t("Personalizar", "Custom drivers"), v -> {
-            if (importingDriver) return;
-            String active = CustomDrivers.active(this);
-            String current = active.isEmpty() ? t("Driver del sistema", "System driver")
-                    : active.substring(active.lastIndexOf('/') + 1);
-            new AlertDialog.Builder(this)
-                    .setTitle(t("Driver gráfico", "GPU driver") + " · " + current)
-                    .setItems(new String[] {"Import Turnip (Adreno)", "Import PanVK (Mali, experimental)",
-                            t("Usar driver del sistema", "Use system driver")}, (dialog, choice) -> {
-                        if (choice < 2) pick(choice == 0 ? PICK_TURNIP : PICK_PANVK, "*/*", false);
-                        else {
-                            try {
-                                CustomDrivers.useSystem(this);
-                                tell("GPU driver", t("Driver del sistema seleccionado.", "System driver selected."));
-                            } catch (IOException e) {
-                                tell("GPU driver", String.valueOf(e.getMessage()));
-                            }
-                        }
-                    })
-                    .setNegativeButton(t("Cerrar", "Close"), null)
-                    .show();
-        });
+        addRow(root, t("Driver gráfico", "GPU driver"), "Select", v -> showDrivers());
     }
 
-    private void importDriver(Uri uri, boolean panvk) {
+    private void showDrivers() {
+        if (importingDriver) return;
+        if (driverSelector == null) driverSelector = new DriverSelector(this);
+        driverSelector.show();
+    }
+
+    private void importDriver(Uri uri) {
         if (importingDriver) return;
         importingDriver = true;
         String name = displayName(uri);
@@ -683,20 +672,25 @@ public class Launcher extends Activity {
         Toast.makeText(this, t("Importando driver…", "Importing driver…"), Toast.LENGTH_SHORT).show();
         new Thread(() -> {
             try {
-                String installed = CustomDrivers.install(app, uri, name, panvk);
-                runOnUiThread(() -> finishDriverImport(installed, null));
+                CustomDrivers.install(app, uri, name);
+                runOnUiThread(() -> finishDriverImport(null));
             } catch (Exception e) {
-                runOnUiThread(() -> finishDriverImport(null, String.valueOf(e.getMessage())));
+                String message = e.getMessage() == null ? e.toString() : e.getMessage();
+                runOnUiThread(() -> finishDriverImport(message));
             }
         }, "P4G-driver-import").start();
     }
 
-    private void finishDriverImport(String installed, String error) {
+    private void finishDriverImport(String error) {
         importingDriver = false;
         if (isFinishing() || isDestroyed()) return;
-        if (error != null) tell(t("No se pudo importar", "Driver import failed"), error);
-        else tell(t("Driver seleccionado", "Driver selected"), installed
-                + t("\nSe probará al abrir el juego.", "\nIt will be tried the next time you open the game."));
+        if (error != null) {
+            new AlertDialog.Builder(this).setTitle("Driver import failed").setMessage(error)
+                    .setPositiveButton("Back", (d, w) -> showDrivers()).show();
+        } else {
+            Toast.makeText(this, "Driver imported and selected.", Toast.LENGTH_SHORT).show();
+            showDrivers();
+        }
     }
 
     private boolean exportingLogs;
