@@ -171,18 +171,34 @@ std::unique_ptr<NsoModule> load_nso_bytes(const std::vector<uint8_t>& raw, const
         sym.value = st_value, sym.size = st_size;
         sym.type = st_info & 0xF, sym.bind = st_info >> 4, sym.imported = st_shndx == 0;
     }
-    for (uint64_t i = 0; i < nsyms; i++) m->symbols[i].name = m->names[i].c_str();
-
-    auto relocs = [&](uint64_t start, uint64_t bytes) {
-        for (uint64_t a = start; a + 24 <= start + bytes; a += 24) {
+    // Relocation boundaries are local to each NSO (P5R v0.5.5 / librazelle, PR #65).
+    // Validate the dynamic table ranges before resolving or walking them.
+    auto relocs = [&](int64_t address_tag, int64_t size_tag, const char* first, const char* last) {
+        const auto address = dyn.find(address_tag), length = dyn.find(size_tag);
+        if (address == dyn.end()) return length == dyn.end() || length->second == 0;
+        const uint64_t start = address->second, bytes = length == dyn.end() ? 0 : length->second;
+        if (start > m->image.size() || bytes > m->image.size() - start || bytes % 24 != 0) return false;
+        const uint64_t end = start + bytes;
+        for (uint64_t i = 0; i < nsyms; ++i) {
+            if (m->names[i] != first && m->names[i] != last) continue;
+            Symbol& sym = m->symbols[i];
+            sym.value = m->names[i] == first ? start : end;
+            sym.module_relative = true;
+        }
+        for (uint64_t a = start; a < end; a += 24) {
             uint64_t off = 0, info = 0;
             int64_t addend = 0;
             rd(m->image, a, off), rd(m->image, a + 8, info), rd(m->image, a + 16, addend);
             m->relocs.push_back({off, uint32_t(info), uint32_t(info >> 32), addend});
         }
+        return true;
     };
-    if (dyn.count(DT_RELA)) relocs(dyn[DT_RELA], dyn.count(DT_RELASZ) ? dyn[DT_RELASZ] : 0);
-    if (dyn.count(DT_JMPREL)) relocs(dyn[DT_JMPREL], dyn.count(DT_PLTRELSZ) ? dyn[DT_PLTRELSZ] : 0);
+    if (!relocs(DT_RELA, DT_RELASZ, "__rel_dyn_start", "__rel_dyn_end") ||
+        !relocs(DT_JMPREL, DT_PLTRELSZ, "__rel_plt_start", "__rel_plt_end")) {
+        error = path + ": dynamic relocation table is out of bounds or misaligned";
+        return nullptr;
+    }
+    for (uint64_t i = 0; i < nsyms; i++) m->symbols[i].name = m->names[i].c_str();
 
     std::map<uint64_t, const Reloc*> rel_at;
     for (const Reloc& r : m->relocs) rel_at.emplace(r.offset, &r);
