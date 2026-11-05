@@ -168,17 +168,22 @@ void boot() {
     auto find_mod_exefs = [](const std::string& name) -> std::string {
         std::error_code ec;
         fs::path root = fs::u8path(plat::data_root()) / "mods";
+        std::vector<fs::path> candidates;
         if (fs::is_regular_file(root / "exefs" / fs::u8path(name), ec))
-            return (root / "exefs" / fs::u8path(name)).string();
+            candidates.push_back(root / "exefs" / fs::u8path(name));
         if (fs::is_directory(root, ec)) {
             for (auto& e : fs::directory_iterator(root, ec)) {
-                if (e.is_directory(ec)) {
+                auto folder = e.path().filename().u8string();
+                if (!folder.empty() && folder[0] != '.' && folder[0] != '_' &&
+                    folder != u8"romfs" && folder != u8"exefs" && e.is_directory(ec)) {
                     fs::path candidate = e.path() / "exefs" / fs::u8path(name);
-                    if (fs::is_regular_file(candidate, ec)) return candidate.string();
+                    if (fs::is_regular_file(candidate, ec)) candidates.push_back(candidate);
                 }
             }
         }
-        return {};
+        // Match RomFS: the last active folder in alphabetical order wins.
+        std::sort(candidates.begin(), candidates.end());
+        return candidates.empty() ? std::string() : candidates.back().string();
     };
 
     std::vector<std::string> mod_names = {"main", "sdk"};
