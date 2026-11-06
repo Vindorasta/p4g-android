@@ -15,7 +15,6 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <jni.h>
-#include <link.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
@@ -54,6 +53,10 @@
 #if NX_NCE
 #include "nce/nce.h"
 #endif
+
+// Keep this after nx/module.h (included by nx/runtime.h): Android NDK 28's
+// elf_common.h defines R_AARCH64_* macros with the same names as NX constants.
+#include <link.h>
 
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
