@@ -92,6 +92,39 @@ bool p4g_input() {
     return enabled;
 }
 
+float gamepad_stick_full() {
+    static const float full = [] {
+        const char* e = std::getenv("NX_STICK_FULL");
+        char* end = nullptr;
+        const float v = e ? std::strtof(e, &end) : 0.80f;
+        return e && (end == e || *end || !std::isfinite(v)) ? 0.80f : std::clamp(v, 0.60f, 1.0f);
+    }();
+    return full;
+}
+
+bool gamepad_run_fix() {
+    static const bool on = [] {
+        if (std::strcmp(nx::game::kInfo.id, "p4g") != 0) return false;
+        const char* e = std::getenv("NX_P4G_STICK_FIX");
+        const bool enabled = !e || std::strcmp(e, "0") != 0;
+        nx::log("p4g: gamepad left-stick run-fix-v3 %s (deadzone 0.10, full %.3f, release 0.55, hold 100 ms)",
+                enabled ? "enabled" : "disabled", double(gamepad_stick_full()));
+        return enabled;
+    }();
+    return on;
+}
+
+GamepadRunStick g_gamepad_run;
+int32_t g_run_device = -1;
+bool g_run_seen = false;
+size_t g_run_history = 0;
+
+void sample_gamepad_left(uint64_t now) {
+    if (!gamepad_run_fix() || !g_run_seen) return;
+    const StickPosition left = g_gamepad_run.sample(now);
+    g_pad_buttons.lx = left.x, g_pad_buttons.ly = left.y;
+}
+
 // Temporary analog diagnosis: one aggregate per second, at most 300 lines per process. All access is under g_in.
 // Record Android input separately from the merged pad, so a low physical sample, a second input device, and a
 // touch/script override can be distinguished. These observers never change movement or discard input events.
@@ -144,14 +177,15 @@ void trace_merged(const PadState& p, const char* origin, bool touch_left, uint64
     nx::log("hid: analog-trace-v2 t_ms=%llu seq=%llu events=%u switches=%u dev=%d src=%#x action=%d "
             "age_ms=%llu raw=(%.4f,%.4f) raw_range=%.4f..%.4f raw_min=(%.4f,%.4f,dev=%d) zeros=%u "
             "mapped=(%d,%d) merged=(%d,%d,%s) merged_range=%.4f..%.4f merged_min=(%d,%d,%s) "
-            "reads=%u touch_reads=%u",
+            "reads=%u touch_reads=%u run_fix=%u running=%u batch_peak=%.4f history=%zu",
             (unsigned long long)(now / 1'000'000), (unsigned long long)d.sequence, d.events, d.switches,
             int(d.device), unsigned(d.source), int(d.action),
             (unsigned long long)(d.last_event_ns ? (now - d.last_event_ns) / 1'000'000 : 0),
             double(d.x), double(d.y), d.events ? d.raw_min : -1.0, d.events ? d.raw_max : -1.0,
             double(d.min_x), double(d.min_y), int(d.min_device), d.zeros,
             int(g_pad_buttons.lx), int(g_pad_buttons.ly), int(p.lx), int(p.ly), origin,
-            d.merged_min, d.merged_max, int(d.min_lx), int(d.min_ly), d.min_origin, d.reads, d.touch_reads);
+            d.merged_min, d.merged_max, int(d.min_lx), int(d.min_ly), d.min_origin, d.reads, d.touch_reads,
+            unsigned(gamepad_run_fix()), unsigned(g_gamepad_run.running()), g_gamepad_run.batch_peak(), g_run_history);
     ++d.lines;
     d.next_ns = now + 1'000'000'000ull;
     d.events = d.switches = d.zeros = d.reads = d.touch_reads = 0;
@@ -290,6 +324,13 @@ uint64_t touch_button(float x, float y) {
 void clear_touch_input() {
     std::lock_guard lock(g_in);
     reset_touch();
+    if (gamepad_run_fix()) {
+        g_gamepad_run.reset();
+        g_run_device = -1;
+        g_run_seen = false;
+        g_run_history = 0;
+        g_pad_buttons.lx = g_pad_buttons.ly = 0;
+    }
 }
 
 int32_t on_input(android_app* app, AInputEvent* e) {
@@ -336,7 +377,32 @@ int32_t on_input(android_app* app, AInputEvent* e) {
             float scaled = (v - sign * kDeadzone) / (1.f - kDeadzone);
             return int32_t(std::clamp(scaled, -1.f, 1.f) * kStickMax);
         };
-        if (p4g_input()) {
+        if (gamepad_run_fix()) {
+            const uint64_t now = monotonic_ns();
+            const int32_t device = AInputEvent_getDeviceId(e);
+            if (!g_run_seen || device != g_run_device) g_gamepad_run.reset(), g_run_device = device;
+            g_run_seen = true;
+            const int32_t action = AMotionEvent_getAction(e) & AMOTION_EVENT_ACTION_MASK;
+            if (action == AMOTION_EVENT_ACTION_MOVE) {
+                const float x = AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_X, 0);
+                const float y = -AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_Y, 0);
+                float peak_x = x, peak_y = y;
+                double peak = std::isfinite(x) && std::isfinite(y) ? std::hypot(double(x), double(y)) : 0;
+                g_run_history = AMotionEvent_getHistorySize(e);
+                for (size_t h = 0; h < g_run_history; ++h) {
+                    const float hx = AMotionEvent_getHistoricalAxisValue(e, AMOTION_EVENT_AXIS_X, 0, h);
+                    const float hy = -AMotionEvent_getHistoricalAxisValue(e, AMOTION_EVENT_AXIS_Y, 0, h);
+                    if (!std::isfinite(hx) || !std::isfinite(hy)) continue;
+                    const double r = std::hypot(double(hx), double(hy));
+                    if (r > peak) peak = r, peak_x = hx, peak_y = hy;
+                }
+                g_gamepad_run.update(x, y, peak_x, peak_y, now, gamepad_stick_full());
+            } else {
+                g_gamepad_run.reset();
+                g_run_history = 0;
+            }
+            sample_gamepad_left(now);
+        } else if (p4g_input()) {
             const StickPosition left = radial_stick(AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_X, 0),
                     -AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_Y, 0), 0.12f, 0.98f);
             g_pad_buttons.lx = left.x;
@@ -432,6 +498,7 @@ bool headless() {  // NX_HEADLESS (platform.h)
 
 static void read_pad_impl(PadState& p, bool sample_buttons) {
     std::lock_guard lk(g_in);
+    if (gamepad_run_fix()) sample_gamepad_left(monotonic_ns());
     const char* analog_origin = "none";
     bool analog_touch_left = false;
     p.buttons |= g_pad_buttons.buttons;
