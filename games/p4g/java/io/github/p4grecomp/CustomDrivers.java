@@ -22,7 +22,7 @@ import java.util.zip.ZipFile;
 /** Driver loading is based on P5R Android v0.5.3. Saved packages remain available when switching drivers. */
 final class CustomDrivers {
     private static final long MAX_BYTES = 256L * 1024 * 1024;
-    private static final String PACKAGE_NAME = "(turnip|panvk|powervr)-[0-9a-f-]{36}";
+    private static final String PACKAGE_NAME = "(turnip|panvk|powervr|xclipse)-[0-9a-f-]{36}";
 
     private CustomDrivers() {}
 
@@ -91,8 +91,10 @@ final class CustomDrivers {
             // Older builds kept only active.txt and the libraries, without display metadata.
             if (active.startsWith(folder.getName() + "/")) {
                 String family = folder.getName().startsWith("panvk-") ? "PanVK"
-                        : folder.getName().startsWith("powervr-") ? "PowerVR" : "Turnip";
-                return new Driver(active, family + " (previous import)", "", family.equals("PanVK") ? 31 : 29);
+                        : folder.getName().startsWith("powervr-") ? "PowerVR"
+                        : folder.getName().startsWith("xclipse-") ? "Xclipse" : "Turnip";
+                int minApi = family.equals("Xclipse") ? 34 : family.equals("PanVK") ? 31 : 29;
+                return new Driver(active, family + " (previous import)", "", minApi);
             }
         } catch (Exception e) {
             Log.w("P4G-Launch", "Could not read saved driver metadata", e);
@@ -155,8 +157,10 @@ final class CustomDrivers {
             if (family.isEmpty()) family = familyHint(metadata.optString("name") + " "
                     + metadata.optString("driverVersion") + " " + name);
             if (family.isEmpty()) family = binaryFamily(new File(staged, library));
-            if (family.isEmpty()) throw new IOException("Choose a Turnip, PanVK, or PowerVR driver package.");
-            int minApi = Math.max(metadata.optInt("minApi", 0), family.equals("panvk") ? 31 : 29);
+            if (family.isEmpty())
+                throw new IOException("Choose a Turnip, PanVK, PowerVR, or Xclipse driver package.");
+            int familyMinApi = family.equals("xclipse") ? 34 : family.equals("panvk") ? 31 : 29;
+            int minApi = Math.max(metadata.optInt("minApi", 0), familyMinApi);
             if (minApi > Build.VERSION.SDK_INT) throw new IOException("The driver requires a newer Android version.");
             String display = label(metadata.optString("name"));
             if (display.isEmpty()) display = label(name);
@@ -256,11 +260,12 @@ final class CustomDrivers {
         if (text.contains("panvk") || text.contains("panfrost")) return "panvk";
         if (text.contains("turnip") || text.contains("freedreno")) return "turnip";
         if (text.contains("powervr") || text.contains("imagination") || text.contains("pvr_")) return "powervr";
+        if (text.contains("xclipse") || text.contains("radv") || text.contains("vulkan.radeon")) return "xclipse";
         return "";
     }
 
     private static String binaryFamily(File library) throws IOException {
-        boolean turnip = false, panvk = false, powervr = false;
+        boolean turnip = false, panvk = false, powervr = false, xclipse = false;
         String tail = "";
         byte[] buffer = new byte[65536];
         try (InputStream in = new FileInputStream(library)) {
@@ -270,12 +275,14 @@ final class CustomDrivers {
                 panvk |= text.contains("PanVK") || text.contains("panvk_GetInstanceProcAddr");
                 powervr |= text.contains("PowerVR") || text.contains("Imagination") ||
                         text.contains("pvr_GetInstanceProcAddr");
+                xclipse |= text.contains("Xclipse") || text.contains("RADV") ||
+                        text.contains("radv_GetInstanceProcAddr");
                 tail = text.substring(Math.max(0, text.length() - 32));
             }
         }
-        int matches = (turnip ? 1 : 0) + (panvk ? 1 : 0) + (powervr ? 1 : 0);
+        int matches = (turnip ? 1 : 0) + (panvk ? 1 : 0) + (powervr ? 1 : 0) + (xclipse ? 1 : 0);
         if (matches != 1) return "";
-        return panvk ? "panvk" : powervr ? "powervr" : "turnip";
+        return panvk ? "panvk" : powervr ? "powervr" : xclipse ? "xclipse" : "turnip";
     }
 
     private static String label(String text) {

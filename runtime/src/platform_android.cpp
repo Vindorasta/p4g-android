@@ -434,7 +434,7 @@ bool module_loaded(const std::string& library) {
 }
 
 bool probe_vulkan(PFN_vkGetInstanceProcAddr gipa, VkDriverId driver, VkDriverId alternate,
-                  uint32_t minimum_api, bool powervr) {
+                  uint32_t minimum_api, bool powervr, bool xclipse) {
     if (!gipa) {
         nx::log("gpu driver probe: vkGetInstanceProcAddr is unavailable");
         return false;
@@ -479,7 +479,9 @@ bool probe_vulkan(PFN_vkGetInstanceProcAddr gipa, VkDriverId driver, VkDriverId 
                 properties(devices[i], &props);
                 const bool expected_driver = identity.driverID == driver ||
                     (alternate && identity.driverID == alternate) ||
-                    (powervr && props.properties.vendorID == 0x1010);
+                    (powervr && props.properties.vendorID == 0x1010) ||
+                    (xclipse && (props.properties.vendorID == 0x144d ||
+                                 std::strstr(props.properties.deviceName, "Xclipse") != nullptr));
                 nx::log("gpu driver probe: %s, vendor %04x, driver id %u, Vulkan %u.%u",
                         props.properties.deviceName, props.properties.vendorID, unsigned(identity.driverID),
                         VK_API_VERSION_MAJOR(props.properties.apiVersion),
@@ -493,14 +495,14 @@ bool probe_vulkan(PFN_vkGetInstanceProcAddr gipa, VkDriverId driver, VkDriverId 
     }
     if (destroy) destroy(instance, nullptr);
     if (!matches)
-        nx::log("gpu driver probe: no compatible device (expected id %u%s, minimum Vulkan %u.%u)",
-                unsigned(driver), alternate ? " or 25" : "", VK_API_VERSION_MAJOR(minimum_api),
+        nx::log("gpu driver probe: no compatible device (expected id %u or %u, minimum Vulkan %u.%u)",
+                unsigned(driver), unsigned(alternate), VK_API_VERSION_MAJOR(minimum_api),
                 VK_API_VERSION_MINOR(minimum_api));
     return matches;
 }
 
 // Adapted from P5R Android v0.5.3. The custom-driver hook is independent of
-// KGSL memory import, so it can also load Android PanVK and PowerVR packages.
+// KGSL memory import, so it can also load Android PanVK, PowerVR and Xclipse packages.
 void* custom_vulkan() {
     if (!g_app || !g_app->activity->internalDataPath) return nullptr;
     if (const char* value = std::getenv("NX_SYSTEM_DRIVER"); value && std::strcmp(value, "1") == 0)
@@ -514,8 +516,9 @@ void* custom_vulkan() {
     const std::string folder = path.substr(0, slash), library = path.substr(slash + 1);
     const bool panvk = folder.starts_with("panvk-");
     const bool powervr = folder.starts_with("powervr-");
-    if (!panvk && !powervr && !folder.starts_with("turnip-")) return nullptr;
-    const size_t prefix = panvk ? 6 : powervr ? 8 : 7;
+    const bool xclipse = folder.starts_with("xclipse-");
+    if (!panvk && !powervr && !xclipse && !folder.starts_with("turnip-")) return nullptr;
+    const size_t prefix = panvk ? 6 : powervr ? 8 : xclipse ? 8 : 7;
     if (folder.size() != prefix + 36 || folder.find_first_not_of("0123456789abcdef-", prefix) != std::string::npos ||
         library.empty() || !library.ends_with(".so") ||
         library.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-") != std::string::npos)
@@ -533,21 +536,26 @@ void* custom_vulkan() {
     void* handle = adrenotools_open_libvulkan(RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM, nullptr,
                                              hooks.c_str(), dir.c_str(), library.c_str(), nullptr, nullptr);
     void* gipa = handle ? dlsym(handle, "vkGetInstanceProcAddr") : nullptr;
+    // Numeric Xclipse values keep this build compatible with older Android NDK Vulkan headers:
+    // VK_DRIVER_ID_SAMSUNG_PROPRIETARY = 21 and VK_DRIVER_ID_MESA_RADV = 3.
     const VkDriverId expected = panvk ? VK_DRIVER_ID_MESA_PANVK
-        : powervr ? VK_DRIVER_ID_IMAGINATION_PROPRIETARY : VK_DRIVER_ID_MESA_TURNIP;
+        : powervr ? VK_DRIVER_ID_IMAGINATION_PROPRIETARY
+        : xclipse ? static_cast<VkDriverId>(21) : VK_DRIVER_ID_MESA_TURNIP;
     // VK_DRIVER_ID_IMAGINATION_OPEN_SOURCE_MESA is value 25. Keep the numeric fallback so this also builds
     // with Android NDK Vulkan headers that predate that enum name.
-    const VkDriverId alternate = powervr ? static_cast<VkDriverId>(25) : VkDriverId{};
+    const VkDriverId alternate = powervr ? static_cast<VkDriverId>(25)
+        : xclipse ? static_cast<VkDriverId>(3) : VkDriverId{};
     const uint32_t minimum_api = powervr ? VK_API_VERSION_1_1 : VK_API_VERSION_1_3;
     const bool verified = probe_vulkan(reinterpret_cast<PFN_vkGetInstanceProcAddr>(gipa), expected, alternate,
-                                       minimum_api, powervr);
+                                       minimum_api, powervr, xclipse);
     const bool loaded = module_loaded(library);
     if (!loaded || !verified) {
         nx::log("gpu driver: %s %s; using system driver", library.c_str(),
                 loaded ? "failed verification" : "did not load");
         return nullptr;
     }
-    nx::log("gpu driver: using %s (%s)", library.c_str(), panvk ? "PanVK" : powervr ? "PowerVR" : "Turnip");
+    nx::log("gpu driver: using %s (%s)", library.c_str(),
+            panvk ? "PanVK" : powervr ? "PowerVR" : xclipse ? "Xclipse" : "Turnip");
     return gipa;
 }
 
