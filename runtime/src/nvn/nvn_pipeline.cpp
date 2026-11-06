@@ -416,6 +416,10 @@ Pool& pool() {
         pl->threads = std::min(n, 8u);
         for (unsigned i = 0; i < pl->threads; i++)
             std::thread([pl] {
+#if defined(__ANDROID__)
+                plat::place_fast_cores();
+#endif
+                plat::set_thread_name("nvn pipeline");
                 t_worker = true;
                 for (;;) {
                     std::shared_ptr<PipeTask> t;

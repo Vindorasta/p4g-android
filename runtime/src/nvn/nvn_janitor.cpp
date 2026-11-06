@@ -23,6 +23,9 @@ std::deque<std::function<void()>> g_jobs;
 bool g_started = false;
 
 void run() {
+#if defined(__ANDROID__)
+    plat::place_fast_cores();
+#endif
     plat::set_thread_name("nvn janitor");
     for (;;) {
         std::function<void()> job;

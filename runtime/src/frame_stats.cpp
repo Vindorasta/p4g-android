@@ -5,7 +5,8 @@
 //
 // NX_AFFINITY (Android): 1 puts the thread that replays and presents on the fastest cluster and the game's main
 // thread on the middle ones; 2 places game and worker threads on all performance clusters. Frame-thread affinity
-// is re-applied every 60 ticks (Android moves an app's threads between cpusets). Unset or 0: the scheduler decides.
+// is re-applied every 60 ticks (Android moves an app's threads between cpusets). Unset defaults to 2; 0 always leaves
+// placement to Android's scheduler.
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -61,8 +62,8 @@ const Cpus& cpus() {
         Cpus x;
         const long n = std::clamp(sysconf(_SC_NPROCESSORS_CONF), 0L, long(CPU_SETSIZE));
         std::vector<long> ratings(size_t(n), 0), distinct;
-        // Adapted from P5R v0.5.4 (0b1c74f). Try complete sources in order and
-        // never infer a performance cluster from CPU numbering or missing values.
+        // Adapted from P5R v0.5.4 (0b1c74f). Prefer complete kernel topology sources. Some Android builds deny all
+        // of them to apps, so use the conservative and widespread 4+4 ordering only for exactly eight CPUs.
         const char* source = "unknown";
         for (const char* candidate : {"cpufreq/cpuinfo_max_freq", "cpu_capacity", "cpufreq/scaling_max_freq"}) {
             for (long cpu = 0; cpu < n; ++cpu) {
@@ -84,6 +85,12 @@ const Cpus& cpus() {
             }
             distinct.clear();
         }
+        if (distinct.empty() && n == 8) {
+            ratings.assign(8, 1);
+            std::fill(ratings.begin() + 4, ratings.end(), 2);
+            distinct = {1, 2};
+            source = "8-core 4+4 fallback";
+        }
         x.clusters = distinct.empty() ? 1 : int(distinct.size());
         for (long value : ratings)
             x.cluster.push_back(int(std::lower_bound(distinct.begin(), distinct.end(), value) - distinct.begin()));
@@ -100,7 +107,7 @@ const Cpus& cpus() {
 int affinity_mode() {
     static const int m = [] {
         const char* e = std::getenv("NX_AFFINITY");
-        return e ? std::atoi(e) : 0;
+        return std::clamp(e ? std::atoi(e) : 2, 0, 2);
     }();
     return m;
 }

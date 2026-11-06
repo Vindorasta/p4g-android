@@ -35,6 +35,9 @@ bool enabled() {
 }
 
 void run() {
+#if defined(__ANDROID__)
+    plat::place_fast_cores();
+#endif
     plat::set_thread_name("nvn replay");
     for (;;) {
         std::pair<uint64_t, std::function<void()>> job;

@@ -217,8 +217,9 @@ public class Launcher extends Activity {
                     new String[] {"Desactivado", "Activado"}, new String[] {"Off", "On"}, 0));
         }
         options.add(new Option("NX_AFFINITY", "Afinidad de CPU (experimental)", "CPU affinity (experimental)",
-                new String[] {"0", "2", "1"}, new String[] {"Automática", "Núcleos rápidos", "Separar hilos de cuadro"},
-                new String[] {"Automatic", "Performance cores", "Split frame threads"}, 0));
+                new String[] {"0", "2", "1"},
+                new String[] {"Sistema Android", "Optimizada (recomendada)", "Separar hilos de cuadro"},
+                new String[] {"Android scheduler", "Optimized (recommended)", "Split frame threads"}, 1));
         options.add(new Option("NX_P4G_MOTION_BLUR", "Desactivar desenfoque de movimiento (experimental)",
                 "Disable motion blur (experimental)", new String[] {"1", "0"},
                 new String[] {"Desactivado", "Activado"}, new String[] {"Off", "On"}, 0));
