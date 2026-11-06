@@ -785,7 +785,10 @@ extern "C" void android_main(android_app* app) {
         }
     }
     // The picked folder wins over the app's own one; else the own one (adb push), else Internal storage/<title>.
-    g_root = !chosen.empty() && has_data(chosen) ? chosen : has_data(own) ? own : shared;
+    const char* installed = std::getenv("NX_P4G_INSTALLED");
+    const bool p4g_installed = std::strcmp(nx::game::kInfo.id, "p4g") == 0 && installed && installed[0] == '1';
+    // The installed payload can live in Android/data while this chosen root still holds saves, mods and config.
+    g_root = !chosen.empty() && (has_data(chosen) || p4g_installed) ? chosen : has_data(own) ? own : shared;
     // config.txt's NX_* lines become environment variables (the NVN layer reads its switches with getenv), without
     // overriding a variable already set. Android defaults: handheld (720p, the lighter GPU load).
     {

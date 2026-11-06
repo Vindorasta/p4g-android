@@ -4,6 +4,7 @@
 //   NX_GAME_NSP                 or the file's path (the PC)
 //   NX_KEYS                     the player's prod.keys (NX_TITLE_KEYS: title.keys, when the dump needs it)
 //   NX_P4G_INSTALLED=1           P4G: ignore the source container and use <data>/game/{exefs,extract/romfs,spirv}
+//   NX_P4G_GAME_ROOT             optional absolute payload path (Android/data/<package>/files/game on Android)
 // Without NX_GAME_FD / NX_GAME_NSP the data folder's exefs/ and extract/romfs/ are used, as before.
 #pragma once
 

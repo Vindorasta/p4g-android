@@ -95,6 +95,60 @@ public class AppFlowTest {
         check(new String(Files.readAllBytes(new File(root, "config.txt").toPath()), "UTF-8").equals("NX_TOUCH_HIDDEN=L3\n"));
         System.out.println("PASS: installed data without NSP/keys, atomic replacement/recovery, incomplete imports, paths, 64-bit sizes and saves/mods/settings isolation");
     }
+    static void smallInstallation(File root, String content) throws Exception {
+        File stage = InstalledGameFiles.begin(root); installationFixture(stage, content);
+        text(new File(stage, "spirv/extra.resources"), "keep generated resource metadata");
+        InstalledGameFiles.finish(stage); InstalledGameFiles.publish(root, stage);
+    }
+    static SortedMap<String, String> snapshot(File root) throws Exception {
+        SortedMap<String, String> result = new TreeMap<>();
+        try (java.util.stream.Stream<Path> stream = Files.walk(root.toPath())) {
+            for (Path path : (Iterable<Path>)stream::iterator) if (Files.isRegularFile(path))
+                result.put(root.toPath().relativize(path).toString(), Base64.getEncoder().encodeToString(Files.readAllBytes(path)));
+        }
+        return result;
+    }
+    static void migrationTests(File parent) throws Exception {
+        File old = new File(parent, "migration-rename/shared"), app = new File(parent, "migration-rename/Android/data/io.github.p4grecomp/files");
+        smallInstallation(old, "rename game");
+        text(new File(old, "user/save/data0001.bin"), "save"); text(new File(old, "mods/translation/romfs/data.cpk"), "mod");
+        text(new File(old, "config.txt"), "config");
+        SortedMap<String, String> source = snapshot(InstalledGameFiles.game(old));
+        InstalledGameFiles.migrate(old, app);
+        check(!InstalledGameFiles.game(old).exists() && InstalledGameFiles.ready(app));
+        check(snapshot(InstalledGameFiles.game(app)).equals(source));
+        InstalledGameFiles.migrate(old, app); check(InstalledGameFiles.ready(app)); // Reopening is idempotent.
+        check(new File(old, "user/save/data0001.bin").isFile() && new File(old, "mods/translation/romfs/data.cpk").isFile());
+        check(new String(Files.readAllBytes(new File(old, "config.txt").toPath()), "UTF-8").equals("config"));
+
+        old = new File(parent, "migration-copy/shared"); app = new File(parent, "migration-copy/app-files");
+        smallInstallation(old, "copy game"); source = snapshot(InstalledGameFiles.game(old));
+        text(new File(app, "game/installed.tsv"), "incomplete target"); // Forces staged-copy path, independent of mount layout.
+        InstalledGameFiles.migrate(old, app);
+        check(InstalledGameFiles.ready(app) && !InstalledGameFiles.game(old).exists());
+        check(snapshot(InstalledGameFiles.game(app)).equals(source));
+
+        old = new File(parent, "migration-full/shared"); app = new File(parent, "migration-full/app-files");
+        smallInstallation(old, "keep on disk-full"); source = snapshot(InstalledGameFiles.game(old));
+        text(new File(app, "game/installed.tsv"), "incomplete target");
+        File noSpace = new File(app.getPath()) { @Override public long getUsableSpace() { return 0; } };
+        try { InstalledGameFiles.migrate(old, noSpace); throw new AssertionError("Disk-full migration accepted"); }
+        catch (IOException expected) { }
+        check(InstalledGameFiles.ready(old) && snapshot(InstalledGameFiles.game(old)).equals(source));
+        check(app.listFiles((dir, name) -> name.startsWith(".game-preparing-")).length == 0);
+        InstalledGameFiles.migrate(old, app); check(InstalledGameFiles.ready(app));
+
+        // Termination after destination publication but before old-copy cleanup: receipt finishes only that move.
+        old = new File(parent, "migration-receipt/shared"); app = new File(parent, "migration-receipt/app-files");
+        smallInstallation(old, "same game"); smallInstallation(app, "same game");
+        text(new File(app, "game/.migrated-from"), InstalledGameFiles.game(old).getCanonicalPath());
+        InstalledGameFiles.migrate(old, app); check(!InstalledGameFiles.game(old).exists() && InstalledGameFiles.ready(app));
+        // A valid unrelated destination is not replaced and does not authorize deleting the old installation.
+        old = new File(parent, "migration-conflict/shared"); app = new File(parent, "migration-conflict/app-files");
+        smallInstallation(old, "old game"); smallInstallation(app, "different game");
+        InstalledGameFiles.migrate(old, app); check(InstalledGameFiles.ready(old) && InstalledGameFiles.ready(app));
+        System.out.println("PASS: game-only migration, byte-for-byte rename/copy, low-space failure/retry, interrupted cleanup and existing-destination protection");
+    }
     public static void main(String[] args) throws Exception {
         File temp = Files.createTempDirectory("p4g-flow-test").toFile();
         System.setProperty("p4g.test.root", temp.getPath());
@@ -183,6 +237,7 @@ public class AppFlowTest {
         bytes(new File(runtime, "fedcba9876543210.spv"), new byte[20]);
         check(PreparationFiles.ready(runtime));
         installedGameTests(temp);
+        migrationTests(temp);
         System.out.println("PASS: actual ZIP/folder import, backup, round trip, rollback, save paths and preparation readiness");
     }
 }

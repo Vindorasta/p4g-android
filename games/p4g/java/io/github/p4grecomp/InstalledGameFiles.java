@@ -14,6 +14,95 @@ final class InstalledGameFiles {
     static File game(File root) { return new File(root, "game"); }
     static File shaders(File root) { return new File(game(root), "spirv"); }
 
+    /** One-time move from the shared data folder to Android/data/<package>/files. Never moves saves or mods. */
+    static void migrate(File legacyRoot, File destinationRoot) throws IOException {
+        synchronized (LOCK) {
+            if (legacyRoot.getCanonicalFile().equals(destinationRoot.getCanonicalFile())) return;
+            recover(destinationRoot);
+            File source = game(legacyRoot), destination = game(destinationRoot);
+            if (!source.exists() && !new File(legacyRoot, ".game-previous").exists() &&
+                    !new File(destination, ".migrated-from").exists()) return;
+            if (valid(destination)) { cleanupMigration(source, destination); return; }
+            recover(legacyRoot);
+            if (!valid(source)) return;
+            if (preparing) throw new IOException("Game preparation is already running");
+            if (!destinationRoot.isDirectory() && !destinationRoot.mkdirs()) throw new IOException("Could not create app storage");
+            // Both paths usually share the emulated-storage volume: a rename avoids copying several gigabytes.
+            if (!destination.exists() && source.renameTo(destination)) {
+                boolean verified;
+                try { verified = valid(destination); } catch (IOException e) { verified = false; }
+                if (verified) return;
+                if (!destination.renameTo(source)) throw new IOException("Migration verification failed; game data kept at " + destination);
+                throw new IOException("Migration verification failed. The previous installation was restored");
+            }
+            // FUSE/storage providers may reject a rename across the Android/data boundary. Copy into staging,
+            // publish the verified payload, then remove the old copy. A failed copy keeps the source intact.
+            File stage = begin(destinationRoot);
+            try {
+                long bytes = treeSize(source);
+                long available = destinationRoot.getUsableSpace();
+                if (available < bytes || available - bytes < 64L * 1024 * 1024)
+                    throw new IOException("Not enough free app storage to move the installed game. The old installation is unchanged");
+                copyTree(source, stage, new byte[128 * 1024]);
+                if (!valid(stage)) throw new IOException("Copied game data is incomplete. The old installation is unchanged");
+                try (FileOutputStream out = new FileOutputStream(new File(stage, ".migrated-from"))) {
+                    out.write(source.getCanonicalPath().getBytes("UTF-8")); out.getFD().sync();
+                }
+                publish(destinationRoot, stage);
+                stage = null;
+                cleanupMigration(source, destination);
+            } finally {
+                if (stage != null) discard(destinationRoot, stage);
+            }
+        }
+    }
+
+    private static void cleanupMigration(File source, File destination) throws IOException {
+        File receipt = new File(destination, ".migrated-from");
+        if (!receipt.isFile() || receipt.length() > 4096 || !source.getCanonicalPath().equals(
+                new String(Files.readAllBytes(receipt.toPath()), "UTF-8"))) return;
+        File oldManifest = new File(source, "installed.tsv"), newManifest = new File(destination, "installed.tsv");
+        if (oldManifest.isFile() && (oldManifest.length() != newManifest.length() || oldManifest.length() > 16L * 1024 * 1024 ||
+                !Arrays.equals(Files.readAllBytes(oldManifest.toPath()), Files.readAllBytes(newManifest.toPath())))) return;
+        // If cleanup is interrupted, the receipt permits retrying only this exact old installation folder.
+        try { removeTree(source); Files.deleteIfExists(receipt.toPath()); }
+        catch (IOException ignored) { /* The valid destination is already playable; retry cleanup on reopening. */ }
+    }
+
+    private static long treeSize(File file) throws IOException {
+        if (Files.isSymbolicLink(file.toPath())) throw new IOException("Symbolic links are not supported in an installed game");
+        if (!file.isDirectory()) {
+            if (!file.isFile()) throw new IOException("Could not read installed game data");
+            return file.length();
+        }
+        File[] children = file.listFiles();
+        if (children == null) throw new IOException("Could not read installed game folder");
+        long total = 0;
+        for (File child : children) {
+            long size = treeSize(child);
+            if (Long.MAX_VALUE - total < size) throw new IOException("Installed game size overflow");
+            total += size;
+        }
+        return total;
+    }
+
+    private static void copyTree(File from, File to, byte[] buffer) throws IOException {
+        if (Files.isSymbolicLink(from.toPath())) throw new IOException("Symbolic links are not supported in an installed game");
+        if (from.isDirectory()) {
+            if (!to.isDirectory() && !to.mkdirs()) throw new IOException("Could not create migrated game folder");
+            File[] children = from.listFiles();
+            if (children == null) throw new IOException("Could not read installed game folder");
+            for (File child : children) copyTree(child, new File(to, child.getName()), buffer);
+        } else {
+            long copied = 0;
+            try (InputStream in = new FileInputStream(from); FileOutputStream out = new FileOutputStream(to)) {
+                for (int n; (n = in.read(buffer)) != -1;) { out.write(buffer, 0, n); copied += n; }
+                out.getFD().sync();
+            }
+            if (copied != from.length() || to.length() != copied) throw new IOException("Incomplete game-data copy");
+        }
+    }
+
     static File child(File root, String relative) throws IOException {
         if (relative.isEmpty() || relative.startsWith("/") || relative.indexOf('\\') >= 0 ||
                 relative.indexOf('\t') >= 0 || relative.indexOf('\n') >= 0 || relative.indexOf('\r') >= 0)

@@ -77,6 +77,12 @@ public class Launcher extends Activity {
 
     static File dataDir() { return new File(Environment.getExternalStorageDirectory(), DATA); }
 
+    static File installationDir(Context context) {
+        File dir = context.getExternalFilesDir(null);
+        if (dir == null) throw new IllegalStateException("App storage is unavailable. Try again after storage is mounted.");
+        return dir;
+    }
+
     static final class Api30Helper {
         static boolean isExternalStorageManager() {
             return Environment.isExternalStorageManager();
@@ -110,10 +116,10 @@ public class Launcher extends Activity {
         }
     }
 
-    boolean prepared() {
-        try {
-            return InstalledGameFiles.ready(dataDir());
-        } catch (Exception e) { Log.w("P4G-Launch", "Preparation must be repeated", e); return false; }
+    boolean prepared() throws IOException {
+        File installed = installationDir(this);
+        InstalledGameFiles.migrate(dataDir(), installed);
+        return InstalledGameFiles.ready(installed);
     }
 
     String displayName(Uri uri) {
@@ -313,7 +319,7 @@ public class Launcher extends Activity {
         play = new Button(this);
         P4gTheme.button(play, true);
         play.setAllCaps(false);
-        play.setText("Install game");
+        play.setText(t("Preparar", "Prepare"));
         play.setTextSize(20);
         root.addView(play, new LinearLayout.LayoutParams(-1, dp(64)));
         play.setOnClickListener(v -> {
@@ -322,9 +328,6 @@ public class Launcher extends Activity {
             else if (!hasKeys()) pick(PICK_KEYS, "*/*", true);
             else { prefs().edit().remove("p4g_prepared_uri").apply(); prepare(); }
         });
-        addDriverRow(root);
-        addLogsRow(root);
-        addModsRow(root);
         ScrollView setup = new ScrollView(this);
         setup.addView(root);
         setContentView(setup);
@@ -511,12 +514,30 @@ public class Launcher extends Activity {
         status.setText("Checking preparation...");
         new Thread(() -> {
             final boolean access = hasAccess();
-            final boolean ready = access && prepared();
+            if (access && new File(dataDir(), "game/installed.tsv").isFile()) runOnUiThread(() -> {
+                if (generation == refreshGeneration && !isFinishing() && !isDestroyed()) {
+                    getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                    status.setText("Checking or moving installed game data...");
+                }
+            });
+            boolean installedReady = false;
+            String storageProblem = "";
+            try { installedReady = access && prepared(); }
+            catch (Exception e) {
+                storageProblem = String.valueOf(e.getMessage());
+                Log.w("P4G-Launch", "Could not prepare or move installed data", e);
+            }
+            final boolean ready = installedReady;
+            final String storageError = storageProblem;
             final boolean readable = access && !ready && gameUri() != null && gameReadable();
             final boolean keys = hasKeys();
-            final String shaderError = access ? PreparationFiles.failure(InstalledGameFiles.shaders(dataDir())) : "";
+            String preparationError;
+            try { preparationError = access ? PreparationFiles.failure(InstalledGameFiles.shaders(installationDir(this))) : ""; }
+            catch (Exception e) { preparationError = String.valueOf(e.getMessage()); }
+            final String shaderError = preparationError;
             runOnUiThread(() -> {
                 if (generation != refreshGeneration || isFinishing() || isDestroyed()) return;
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 readyForPlay = ready;
                 load();
                 for (Option o : options) {
@@ -536,8 +557,9 @@ public class Launcher extends Activity {
                         (!access ? "\nAllow file access to prepare the game." :
                          !readable && gameUri() != null ? "\nSelect the game file again." :
                          readable && keys ? "\nInstall the game data to continue. Keep the NSP/XCI until installation finishes." : "") +
+                        (storageError.isEmpty() ? "" : "\n" + storageError) +
                         (shaderError.isEmpty() ? "" : "\nShader generation failed:\n" + shaderError));
-                    play.setText(!access ? "Allow access" : "Install game");
+                    play.setText(t("Preparar", "Prepare"));
                 }
             });
         }, "P4G-setup-check").start();

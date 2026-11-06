@@ -88,7 +88,9 @@ public class ImportActivity extends Activity {
         final File titleKeys =
             Launcher.keysFile(this, "title.keys");
 
-        final File data = Launcher.dataDir();
+        final File data;
+        try { data = Launcher.installationDir(this); }
+        catch (Exception e) { fail(String.valueOf(e.getMessage())); return; }
 
         final File work =
             new File(getCacheDir(), "import");

@@ -89,7 +89,12 @@ std::string game_files_root() {
         const char* e = std::getenv("NX_P4G_INSTALLED");
         return std::strcmp(game::kInfo.id, "p4g") == 0 && e && e[0] == '1';
     }();
-    return plat::data_root() + (installed ? "/game" : "");
+    if (installed) {
+        const char* root = std::getenv("NX_P4G_GAME_ROOT");
+        if (root && root[0] == '/') return root;  // Android's own external-files/game directory.
+        return plat::data_root() + "/game";  // Existing PC/legacy installed-mode launchers.
+    }
+    return plat::data_root();
 }
 
 const nxi::GameImage* game_image() {

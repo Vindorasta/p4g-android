@@ -19,12 +19,14 @@ public class GameActivity extends NativeActivity {
         // The installed payload is checked by the launcher; no source URI, NSP descriptor or keys are opened here.
         try {
             File data = Launcher.dataDir();
-            if (!InstalledGameFiles.present(data))
+            File installed = Launcher.installationDir(this);
+            if (!InstalledGameFiles.present(installed))
                 throw new java.io.IOException("Game installation is incomplete. Install the game again from its NSP/XCI.");
             Os.unsetenv("NX_GAME_FD");
             Os.unsetenv("NX_GAME_NSP");
             Os.unsetenv("NX_GAME_NAME");
             Os.setenv("NX_P4G_INSTALLED", "1", true);
+            Os.setenv("NX_P4G_GAME_ROOT", InstalledGameFiles.game(installed).getCanonicalPath(), true);
             try (java.io.FileOutputStream out = new java.io.FileOutputStream(new File(getFilesDir(), "data_root.txt"))) {
                 out.write((data.getCanonicalPath() + "\n").getBytes("UTF-8"));
             }
