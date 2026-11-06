@@ -330,7 +330,7 @@ public class Launcher extends Activity {
         title.setTypeface(Typeface.DEFAULT_BOLD);
         root.addView(title);
         TextView version = new TextView(this);
-        version.setText("BETA  ·  0.4.0");
+        version.setText("BETA  ·  0.4.1");
         version.setTextColor(P4gTheme.YELLOW);
         version.setTextSize(13);
         version.setTypeface(Typeface.DEFAULT_BOLD);
