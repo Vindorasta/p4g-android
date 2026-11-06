@@ -270,19 +270,59 @@ public class Launcher extends Activity {
         super.onDestroy();
     }
 
+    private LinearLayout settingsGroup(LinearLayout root, String key, String title, String subtitle) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
+        background.setColor(P4gTheme.PANEL);
+        background.setCornerRadius(dp(12));
+        card.setBackground(background);
+        LinearLayout.LayoutParams spacing = new LinearLayout.LayoutParams(-1, -2);
+        spacing.bottomMargin = dp(10);
+        root.addView(card, spacing);
+        Button header = new Button(this);
+        P4gTheme.button(header, false);
+        header.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        header.setTextSize(16);
+        card.addView(header, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(12), dp(8), dp(12), dp(12));
+        TextView hint = new TextView(this);
+        hint.setText(subtitle);
+        hint.setTextColor(P4gTheme.MUTED);
+        hint.setTextSize(13);
+        hint.setPadding(0, 0, 0, dp(8));
+        body.addView(hint);
+        card.addView(body);
+        String preference = "ui_group_" + key;
+        boolean expanded = prefs().getBoolean(preference, false);
+        body.setVisibility(expanded ? View.VISIBLE : View.GONE);
+        header.setText((expanded ? "−  " : "+  ") + title);
+        header.setContentDescription(title + (expanded ? ", collapse" : ", expand"));
+        header.setOnClickListener(v -> {
+            boolean open = body.getVisibility() != View.VISIBLE;
+            body.setVisibility(open ? View.VISIBLE : View.GONE);
+            header.setText((open ? "−  " : "+  ") + title);
+            header.setContentDescription(title + (open ? ", collapse" : ", expand"));
+            prefs().edit().putBoolean(preference, open).apply();
+        });
+        return body;
+    }
+
     void build(boolean ready) {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(P4gTheme.BACKGROUND);
-        int pad = dp(24);
+        int pad = dp(16);
         root.setPadding(pad, pad, pad, pad);
 
         TextView title = new TextView(this);
-        title.setText("P4G");
+        title.setText("PERSONA 4 GOLDEN");
         title.setTextColor(P4gTheme.INK);
         title.setBackgroundColor(P4gTheme.YELLOW);
         title.setPadding(dp(12), dp(8), dp(12), dp(8));
-        title.setTextSize(30);
+        title.setTextSize(24);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         root.addView(title);
         TextView version = new TextView(this);
@@ -334,13 +374,17 @@ public class Launcher extends Activity {
         return;
         }
 
+        LinearLayout graphics = settingsGroup(root, "graphics", t("Imagen y rendimiento", "Graphics & performance"),
+                t("Resolución, FPS y driver", "Resolution, FPS and GPU driver"));
+        LinearLayout controls = settingsGroup(root, "controls", t("Controles", "Controls"),
+                t("Visibilidad y posición de botones", "Button visibility and layout"));
+        LinearLayout files = settingsGroup(root, "files", t("Partidas y mods", "Saves & mods"),
+                t("Copias de seguridad y traducciones", "Backups, translations and mod manager"));
+        LinearLayout diagnostics = settingsGroup(root, "diagnostics", t("Diagnóstico", "Diagnostics"),
+                t("Exportar registros para reportar errores", "Export logs for bug reports"));
+        boolean controlOptions = false;
         for (final Option o : options) {
-            if ("RESOLUTION".equals(o.key)) P4gTheme.section(root, t("Imagen y rendimiento", "Display and performance"));
-            if ("NX_TOUCH_SHOW".equals(o.key)) {
-                addDriverRow(root);
-                addLogsRow(root);
-                P4gTheme.section(root, t("Controles", "Controls"));
-            }
+            if ("NX_TOUCH_SHOW".equals(o.key)) controlOptions = true;
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
@@ -353,19 +397,28 @@ public class Launcher extends Activity {
             final Button value = new Button(this);
             P4gTheme.button(value, false);
             value.setAllCaps(false);
-            value.setMinWidth(dp(180));
+            value.setMinWidth(dp(120));
+            value.setMaxWidth(dp(170));
             row.addView(value);
             value.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    o.pick = (o.pick + 1) % o.values.length;
-                    value.setText(label(o));
-                    save();
+                    String[] labels = new String[o.values.length];
+                    for (int i = 0; i < labels.length; i++) labels[i] = t(o.labelsEs[i], o.labelsEn[i]);
+                    new AlertDialog.Builder(Launcher.this).setTitle(t(o.es, o.en))
+                        .setSingleChoiceItems(labels, o.pick, (dialog, which) -> {
+                            o.pick = which;
+                            value.setText(label(o));
+                            save();
+                            dialog.dismiss();
+                        }).setNegativeButton(t("Cancelar", "Cancel"), null).show();
                 }
             });
             value.setTag(o);
-            root.addView(row);
+            (controlOptions ? controls : graphics).addView(row);
         }
+        addDriverRow(graphics);
+        addLogsRow(diagnostics);
 
         LinearLayout edit = new LinearLayout(this);
         edit.setOrientation(LinearLayout.HORIZONTAL);
@@ -379,8 +432,8 @@ public class Launcher extends Activity {
         Button editButton = new Button(this);
         P4gTheme.button(editButton, false);
         editButton.setAllCaps(false);
-        editButton.setMinWidth(dp(180));
-        editButton.setText(t("Mover", "Move"));
+        editButton.setMinWidth(dp(120));
+        editButton.setText(t("Editar", "Edit layout"));
         edit.addView(editButton);
         editButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -393,9 +446,8 @@ public class Launcher extends Activity {
                 startActivity(new Intent(Launcher.this, ControlsEditor.class));
             }
         });
-        root.addView(edit);
+        controls.addView(edit);
 
-        P4gTheme.section(root, "Saves and translation");
         // Saves: in from a ZIP or a folder (a Switch backup or another player's), out to a ZIP in Download.
         LinearLayout saves = new LinearLayout(this);
         saves.setOrientation(LinearLayout.HORIZONTAL);
@@ -438,7 +490,7 @@ public class Launcher extends Activity {
                 exportSaves();
             }
         });
-        root.addView(saves);
+        files.addView(saves);
 
         // Translation CPK import
         LinearLayout transRow = new LinearLayout(this);
@@ -453,7 +505,7 @@ public class Launcher extends Activity {
         Button transButton = new Button(this);
         P4gTheme.button(transButton, false);
         transButton.setAllCaps(false);
-        transButton.setMinWidth(dp(180));
+        transButton.setMinWidth(dp(120));
         transButton.setText(t("Importar CPK", "Import CPK"));
         transRow.addView(transButton);
         transButton.setOnClickListener(new View.OnClickListener() {
@@ -466,16 +518,17 @@ public class Launcher extends Activity {
                 pick(PICK_CPK, "*/*", false);
             }
         });
-        root.addView(transRow);
-        addModsRow(root);
+        files.addView(transRow);
+        addModsRow(files);
 
         play = new Button(this);
         play.setTextSize(20);
         play.setAllCaps(false);
         P4gTheme.button(play, true);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(64));
-        lp.topMargin = dp(18);
-        root.addView(play, lp);
+        lp.topMargin = dp(4);
+        lp.bottomMargin = dp(16);
+        root.addView(play, 3, lp);
         play.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) { installShadersAndPlay(); }
@@ -499,19 +552,6 @@ public class Launcher extends Activity {
         if (importingSaves || importingCpk || importingDriver || (modManager != null && modManager.busy())
                 || (driverSelector != null && driverSelector.busy())) return;
         if (!readyForPlay) { refresh(); return; }
-        if (CustomDrivers.interrupted(this)) {
-            new AlertDialog.Builder(this).setTitle("Driver initialization interrupted")
-                .setMessage("The previous custom driver initialization did not finish. Start with the system driver?")
-                .setPositiveButton("Use system driver", (d, w) -> {
-                    try { CustomDrivers.useSystem(this); CustomDrivers.acknowledge(this); launchAfterShaderInstall(); }
-                    catch (IOException e) { tell("GPU driver", e.getMessage()); }
-                })
-                .setNeutralButton("Retry custom driver", (d, w) -> {
-                    try { CustomDrivers.acknowledge(this); launchAfterShaderInstall(); }
-                    catch (IOException e) { tell("GPU driver", e.getMessage()); }
-                }).setNegativeButton("Cancel", null).show();
-            return;
-        }
         try { SaveFiles.recover(); }
         catch (IOException e) { tell("Save recovery failed", String.valueOf(e.getMessage())); return; }
         save();
@@ -960,7 +1000,8 @@ public class Launcher extends Activity {
         Button b = new Button(this);
         P4gTheme.button(b, false);
         b.setAllCaps(false);
-        b.setMinWidth(dp(180));
+        b.setMinWidth(dp(120));
+        b.setMaxWidth(dp(170));
         b.setText(button);
         b.setOnClickListener(click);
         row.addView(b);
