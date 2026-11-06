@@ -123,6 +123,9 @@ void GetNpadState(CPU& c) {
     st<int32_t>(out + 24, p.rx);
     st<int32_t>(out + 28, p.ry);
     st<uint32_t>(out + 32, 1);  // IsConnected
+#ifdef __ANDROID__
+    plat::trace_gamepad_left(p, g_frame.load());
+#endif
 }
 
 // GetNpadStates(State* out, int count, const u32& id) -> number written: the newest first. One sample: the current

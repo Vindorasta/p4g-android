@@ -86,9 +86,10 @@ int main() {
     assert(length(feed(stick, .60f, 0, 10'180)) >= kStickMax - 1); // recovery cancels pending release
     assert(length(stick.sample(at(11'000))) >= kStickMax - 1);
 
-    // A zero event must stop even if no new Android event is received afterward.
+    // Current neutral must stop immediately, with no drift from the run latch or old batch peaks.
     feed(stick, 0, 0, 11'010);
-    assert(length(stick.sample(at(11'109))) >= kStickMax - 1);
+    assert(length(stick.sample(at(11'010))) == 0 && !stick.running());
+    assert(length(stick.sample(at(11'109))) == 0);
     assert(length(stick.sample(at(11'110))) == 0 && !stick.running());
     assert(length(stick.sample(at(120'000))) == 0);
 
@@ -105,7 +106,7 @@ int main() {
     assert(length(stick.sample(at(100))) < kStickMax * .5); // sub-full history also expires
     stick.reset();
     stick.update(0, 0, 0, 1, at(0), .8f);
-    assert(stick.sample(at(0)).y == kStickMax);
+    assert(length(stick.sample(at(0))) == 0 && !stick.running());
     assert(length(stick.sample(at(100))) == 0);
 
     stick.reset();
@@ -129,6 +130,20 @@ int main() {
         }
         feed(stick, 0, 0, 120'000);
         assert(length(stick.sample(at(120'100))) == 0);
+    }
+
+    // Precision/overshoot equivalence: all these radii already saturate, including a precise .95 input.
+    for (float r : {.80f, .95f, 1.0f, 1.14f}) {
+        for (int angle = 0; angle < 360; ++angle) {
+            stick.reset();
+            const float x = float(std::cos(angle * pi / 180));
+            const float y = float(std::sin(angle * pi / 180));
+            // Use .801 at the floating-point boundary so normalization noise cannot lower an exact .80 test vector.
+            const float edge = r == .80f ? .801f : r;
+            assert(length(feed(stick, edge*x, edge*y, 0)) >= kStickMax-1);
+            stick.update(.01f, -.01f, x, y, at(1), .8f);
+            assert(length(stick.sample(at(1))) == 0 && !stick.running());
+        }
     }
 
 }

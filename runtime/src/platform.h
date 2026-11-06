@@ -89,6 +89,7 @@ struct PadState {
 void read_pad(PadState& p);  // player 1
 #ifdef __ANDROID__
 void read_pad_motion(PadState& p);  // read the sticks without consuming touch button transitions
+void trace_gamepad_left(const PadState& p, uint64_t frame);  // opt-in P4G final HID input diagnosis
 #endif
 // Touch controls to draw over the picture (touch_layout.cpp, platform_android_input.cpp): circles at x, y (0..1
 // across the landscape screen), radius r (a fraction of its height), opacity alpha, and a label drawn in the middle

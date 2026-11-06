@@ -97,7 +97,8 @@ float gamepad_stick_full() {
         const char* e = std::getenv("NX_STICK_FULL");
         char* end = nullptr;
         const float v = e ? std::strtof(e, &end) : 0.80f;
-        return e && (end == e || *end || !std::isfinite(v)) ? 0.80f : std::clamp(v, 0.60f, 1.0f);
+        if (e && (end == e || *end || !std::isfinite(v))) return 0.80f;
+        return v == 0 ? 0.0f : std::clamp(v, 0.60f, 1.0f);
     }();
     return full;
 }
@@ -106,8 +107,8 @@ bool gamepad_run_fix() {
     static const bool on = [] {
         if (std::strcmp(nx::game::kInfo.id, "p4g") != 0) return false;
         const char* e = std::getenv("NX_P4G_STICK_FIX");
-        const bool enabled = !e || std::strcmp(e, "0") != 0;
-        nx::log("p4g: gamepad left-stick run-fix-v3 %s (deadzone 0.10, full %.3f, release 0.55, hold 100 ms)",
+        const bool enabled = (!e || std::strcmp(e, "0") != 0) && gamepad_stick_full() > 0;
+        nx::log("p4g: gamepad left-stick run-fix-v4 %s (deadzone 0.10, full %.3f, release 0.55, hold 100 ms; neutral stops)",
                 enabled ? "enabled" : "disabled", double(gamepad_stick_full()));
         return enabled;
     }();
@@ -118,6 +119,7 @@ GamepadRunStick g_gamepad_run;
 int32_t g_run_device = -1;
 bool g_run_seen = false;
 size_t g_run_history = 0;
+thread_local const char* g_left_read_origin = "none";
 
 void sample_gamepad_left(uint64_t now) {
     if (!gamepad_run_fix() || !g_run_seen) return;
@@ -551,11 +553,40 @@ static void read_pad_impl(PadState& p, bool sample_buttons) {
     const int32_t before_script_lx = p.lx, before_script_ly = p.ly;
     input_script(p);  // NX_INPUT_SCRIPT (config.txt): scripted runs on the phone, as on the Mac
     if (p.lx != before_script_lx || p.ly != before_script_ly) analog_origin = "script";
+    g_left_read_origin = analog_origin;
     if (sample_buttons && queued) trace_merged(p, analog_origin, analog_touch_left, now);
 }
 
 void read_pad(PadState& p) { read_pad_impl(p, true); }
 void read_pad_motion(PadState& p) { read_pad_impl(p, false); }
+
+// Opt-in diagnosis at the final HID write, after its circular clamp. The project has no validated P4G player
+// position/speed address: never report analog strength or a guessed guest-memory value as character speed.
+void trace_gamepad_left(const PadState& p, uint64_t frame) {
+    static const bool on = [] {
+        const char* e = std::getenv("NX_P4G_STICK_TRACE");
+        return e && std::strcmp(e, "1") == 0 && std::strcmp(nx::game::kInfo.id, "p4g") == 0;
+    }();
+    if (!on) return;
+    std::lock_guard lk(g_in);
+    if (!g_analog_trace.last_event_ns || std::strcmp(g_left_read_origin, "touch") == 0 ||
+        std::strcmp(g_left_read_origin, "script") == 0) return;
+    static uint64_t last_frame = UINT64_MAX;
+    static double frame_min = 0;
+    static unsigned lines = 0;
+    if ((last_frame != UINT64_MAX && frame < last_frame) || lines >= 18'000) return;
+    const double magnitude = std::hypot(double(p.lx), double(p.ly));
+    if (frame == last_frame && magnitude >= frame_min) return;
+    if (!lines) nx::log("p4g: final gamepad trace enabled (per presented frame plus lower writes, max 18000; character speed unavailable)");
+    last_frame = frame;
+    frame_min = magnitude;
+    ++lines;
+    nx::log("p4g: stick-final frame=%llu t_ns=%llu lx=%d ly=%d magnitude=%.3f normalized=%.6f "
+            "buttons=%llx origin=%s run_fix=%u running=%u character_speed=unavailable",
+            (unsigned long long)frame, (unsigned long long)monotonic_ns(), int(p.lx), int(p.ly),
+            magnitude, magnitude / kStickMax, (unsigned long long)p.buttons, g_left_read_origin,
+            unsigned(gamepad_run_fix()), unsigned(g_gamepad_run.running()));
+}
 
 // The drawn layout's buttons (brighter while pressed) and the stick under the thumb; nothing while a controller is
 // in use or for games without a drawn layout.
