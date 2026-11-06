@@ -29,6 +29,7 @@ final class PerformanceOverlay {
     private SurfaceView panel;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint background = new Paint();
+    private float baseTextSize;
     private volatile boolean surfaceReady;
     private volatile int generation;
     private long lastTime, lastCpu, lastFrames;
@@ -58,7 +59,8 @@ final class PerformanceOverlay {
         panel.setFocusable(false);
         panel.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         paint.setTypeface(android.graphics.Typeface.MONOSPACE);
-        paint.setTextSize(P4gTheme.dp(activity, 12));
+        baseTextSize = P4gTheme.dp(activity, 12);
+        paint.setTextSize(baseTextSize);
         paint.setColor(P4gTheme.YELLOW);
         background.setColor(0xB3141414);
         activity.addContentView(panel, new ViewGroup.LayoutParams(
@@ -107,13 +109,32 @@ final class PerformanceOverlay {
             if (canvas == null) return;
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
             String[] lines = text.split("\\n");
-            float pad = P4gTheme.dp(activity, 7), lineHeight = paint.getTextSize() * 1.25f;
+            float shortSide = Math.max(1.0f, Math.min(canvas.getWidth(), canvas.getHeight()));
+            float edge = Math.max(2.0f, shortSide * 0.015f);
+            float pad = Math.min(P4gTheme.dp(activity, 7), shortSide * 0.02f);
+            // The SurfaceView buffer can follow a low output size on some devices. Scale the
+            // panel from the actual canvas and fit it inside both axes instead of assuming 720p.
+            paint.setTextSize(Math.min(baseTextSize, Math.max(9.0f, shortSide * 0.04f)));
             float width = 0;
             for (String line : lines) width = Math.max(width, paint.measureText(line));
-            float left = (canvas.getWidth() - width) * 0.5f - pad;
-            float top = pad;
-            canvas.drawRoundRect(left, top, left + width + pad * 2,
-                    top + lines.length * lineHeight + pad * 1.4f, pad, pad, background);
+            float lineHeight = paint.getTextSize() * 1.25f;
+            float widthScale = (canvas.getWidth() - edge * 2.0f - pad * 2.0f) / Math.max(1.0f, width);
+            float heightScale = (canvas.getHeight() - edge * 2.0f - pad * 1.4f) /
+                    Math.max(1.0f, lines.length * lineHeight);
+            float fit = Math.min(1.0f, Math.min(widthScale, heightScale));
+            if (fit < 1.0f) {
+                paint.setTextSize(Math.max(6.0f, paint.getTextSize() * fit));
+                width = 0;
+                for (String line : lines) width = Math.max(width, paint.measureText(line));
+                lineHeight = paint.getTextSize() * 1.25f;
+            }
+            float panelWidth = Math.min(canvas.getWidth() - edge * 2.0f, width + pad * 2.0f);
+            float panelHeight = Math.min(canvas.getHeight() - edge * 2.0f,
+                    lines.length * lineHeight + pad * 1.4f);
+            float left = Math.max(edge, Math.min((canvas.getWidth() - panelWidth) * 0.5f,
+                    canvas.getWidth() - edge - panelWidth));
+            float top = edge;
+            canvas.drawRoundRect(left, top, left + panelWidth, top + panelHeight, pad, pad, background);
             float y = top + pad + paint.getTextSize();
             for (String line : lines) { canvas.drawText(line, left + pad, y, paint); y += lineHeight; }
         } catch (IllegalArgumentException ignored) {
