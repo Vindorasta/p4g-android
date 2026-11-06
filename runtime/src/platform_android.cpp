@@ -433,42 +433,69 @@ bool module_loaded(const std::string& library) {
     return search.found;
 }
 
-bool probe_vulkan(PFN_vkGetInstanceProcAddr gipa, VkDriverId driver, VkDriverId alternate = VkDriverId{}) {
-    if (!gipa) return false;
+bool probe_vulkan(PFN_vkGetInstanceProcAddr gipa, VkDriverId driver, VkDriverId alternate,
+                  uint32_t minimum_api, bool powervr) {
+    if (!gipa) {
+        nx::log("gpu driver probe: vkGetInstanceProcAddr is unavailable");
+        return false;
+    }
     auto create = reinterpret_cast<PFN_vkCreateInstance>(gipa(nullptr, "vkCreateInstance"));
-    if (!create) return false;
+    if (!create) {
+        nx::log("gpu driver probe: vkCreateInstance is unavailable");
+        return false;
+    }
     const char* extensions[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_ANDROID_SURFACE_EXTENSION_NAME};
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-    app.apiVersion = VK_API_VERSION_1_3;
+    app.apiVersion = minimum_api;
     VkInstanceCreateInfo ci{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     ci.pApplicationInfo = &app;
     ci.enabledExtensionCount = 2;
     ci.ppEnabledExtensionNames = extensions;
     VkInstance instance = VK_NULL_HANDLE;
-    if (create(&ci, nullptr, &instance) != VK_SUCCESS) return false;
+    const VkResult created = create(&ci, nullptr, &instance);
+    if (created != VK_SUCCESS) {
+        nx::log("gpu driver probe: vkCreateInstance failed (%d, requested Vulkan %u.%u)", int(created),
+                VK_API_VERSION_MAJOR(minimum_api), VK_API_VERSION_MINOR(minimum_api));
+        return false;
+    }
     auto destroy = reinterpret_cast<PFN_vkDestroyInstance>(gipa(instance, "vkDestroyInstance"));
     auto enumerate = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(gipa(instance, "vkEnumeratePhysicalDevices"));
     auto properties = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(
         gipa(instance, "vkGetPhysicalDeviceProperties2"));
     bool matches = false;
     uint32_t count = 0;
-    if (destroy && enumerate && properties && enumerate(instance, &count, nullptr) == VK_SUCCESS && count) {
+    if (!destroy || !enumerate || !properties) {
+        nx::log("gpu driver probe: required Vulkan instance functions are unavailable");
+    } else if (const VkResult found = enumerate(instance, &count, nullptr); found != VK_SUCCESS || !count) {
+        nx::log("gpu driver probe: physical-device enumeration failed (%d, count %u)", int(found), count);
+    } else {
         std::vector<VkPhysicalDevice> devices(count);
-        if (enumerate(instance, &count, devices.data()) == VK_SUCCESS) {
+        const VkResult listed = enumerate(instance, &count, devices.data());
+        if (listed == VK_SUCCESS) {
             for (uint32_t i = 0; i < count; ++i) {
                 VkPhysicalDeviceDriverProperties identity{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
                 VkPhysicalDeviceProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
                 props.pNext = &identity;
                 properties(devices[i], &props);
-                if ((identity.driverID == driver || (alternate && identity.driverID == alternate)) &&
-                    props.properties.apiVersion >= VK_API_VERSION_1_3) {
+                const bool expected_driver = identity.driverID == driver ||
+                    (alternate && identity.driverID == alternate) ||
+                    (powervr && props.properties.vendorID == 0x1010);
+                nx::log("gpu driver probe: %s, vendor %04x, driver id %u, Vulkan %u.%u",
+                        props.properties.deviceName, props.properties.vendorID, unsigned(identity.driverID),
+                        VK_API_VERSION_MAJOR(props.properties.apiVersion),
+                        VK_API_VERSION_MINOR(props.properties.apiVersion));
+                if (expected_driver && props.properties.apiVersion >= minimum_api) {
                     matches = true;
                     break;
                 }
             }
-        }
+        } else nx::log("gpu driver probe: physical-device listing failed (%d)", int(listed));
     }
     if (destroy) destroy(instance, nullptr);
+    if (!matches)
+        nx::log("gpu driver probe: no compatible device (expected id %u%s, minimum Vulkan %u.%u)",
+                unsigned(driver), alternate ? " or 25" : "", VK_API_VERSION_MAJOR(minimum_api),
+                VK_API_VERSION_MINOR(minimum_api));
     return matches;
 }
 
@@ -498,6 +525,11 @@ void* custom_vulkan() {
     std::string hooks = info.dli_fname;
     hooks.resize(hooks.rfind('/') + 1);
     const std::string dir = root + folder + "/";
+    if (powervr) {
+        // Mesa PVR identifies itself as non-conformant and refuses to initialize without this explicit opt-in.
+        setenv("PVR_I_WANT_A_BROKEN_VULKAN_DRIVER", "1", 1);
+        nx::log("gpu driver: enabled experimental Mesa PVR initialization");
+    }
     void* handle = adrenotools_open_libvulkan(RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM, nullptr,
                                              hooks.c_str(), dir.c_str(), library.c_str(), nullptr, nullptr);
     void* gipa = handle ? dlsym(handle, "vkGetInstanceProcAddr") : nullptr;
@@ -506,7 +538,9 @@ void* custom_vulkan() {
     // VK_DRIVER_ID_IMAGINATION_OPEN_SOURCE_MESA is value 25. Keep the numeric fallback so this also builds
     // with Android NDK Vulkan headers that predate that enum name.
     const VkDriverId alternate = powervr ? static_cast<VkDriverId>(25) : VkDriverId{};
-    const bool verified = probe_vulkan(reinterpret_cast<PFN_vkGetInstanceProcAddr>(gipa), expected, alternate);
+    const uint32_t minimum_api = powervr ? VK_API_VERSION_1_1 : VK_API_VERSION_1_3;
+    const bool verified = probe_vulkan(reinterpret_cast<PFN_vkGetInstanceProcAddr>(gipa), expected, alternate,
+                                       minimum_api, powervr);
     const bool loaded = module_loaded(library);
     if (!loaded || !verified) {
         nx::log("gpu driver: %s %s; using system driver", library.c_str(),
