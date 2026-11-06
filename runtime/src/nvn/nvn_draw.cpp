@@ -477,6 +477,59 @@ void frame_draws(const ShaderInfo* vs, uint64_t count) {
     sum += std::strtoull(vs->hash.substr(0, 16).c_str(), nullptr, 16);
 }
 
+// Temporary, opt-in resolution trace. Distinct target/viewport/depth signatures per presented frame, not every
+// draw. Small post-processing targets are normal: compare the same scene pass across frames, not two passes
+// within one frame. g_frame is the host's presented-frame counter (it is not a guest command-buffer frame ID).
+void p4g_trace_resolution(const Targets& t, const VkViewport& vp) {
+    static const bool on = [] {
+        const char* e = std::getenv("NX_P4G_TRACE_RES");
+        return e && std::strcmp(e, "1") == 0 && std::strcmp(game::kInfo.id, "p4g") == 0;
+    }();
+    if (!on) return;
+    static const uint64_t from = [] {
+        const char* e = std::getenv("NX_P4G_TRACE_RES_FROM");
+        return e ? std::strtoull(e, nullptr, 10) : 0ull;
+    }();
+    static const bool announced = [] {
+        log("p4g: resolution trace enabled from frame %llu for 300 presented frames; max 16 signatures/frame",
+            (unsigned long long)from);
+        return true;
+    }();
+    (void)announced;
+    const uint64_t f = g_frame.load();
+    if (f < from || f - from >= 300) return;
+    static uint64_t frame = UINT64_MAX;
+    static std::set<std::array<int64_t, 16>> seen;
+    static bool truncated = false;
+    if (f != frame) frame = f, seen.clear(), truncated = false;
+    const std::array<int64_t, 16> key = {
+        int64_t(t.colors[0]), int64_t(t.depth), t.views.level[0] | (t.views.level[8] << 8),
+        g_pass_extent.width, g_pass_extent.height, g_state.has_viewport,
+        g_state.viewport[0], g_state.viewport[1], g_state.viewport[2], g_state.viewport[3],
+        int64_t(vp.x), int64_t(vp.y), int64_t(vp.width), int64_t(vp.height),
+        g_state.depth.depth_test | (g_state.depth.depth_write << 1) | (g_state.depth.depth_func << 8),
+        t.color_count};
+    if (seen.find(key) != seen.end()) return;
+    if (seen.size() >= 16) {
+        if (!truncated) log("p4g: resolution frame=%llu truncated (more than 16 signatures)", (unsigned long long)f);
+        truncated = true;
+        return;
+    }
+    seen.insert(key);
+    const Texture* color = t.color_count && t.colors[0] ? get<Texture>(t.colors[0]) : nullptr;
+    const Texture* depth = t.depth ? get<Texture>(t.depth) : nullptr;
+    log("p4g: resolution frame=%llu pass=%llu c0=%llx logical=%ux%u mip=%u depth=%llx logical=%ux%u mip=%u "
+        "pass_extent=%ux%u guest_viewport_set=%u guest_viewport=(%d,%d,%d,%d) "
+        "host_viewport=(%.1f,%.1f,%.1f,%.1f) depth_test=%u depth_write=%u depth_func=%u",
+        (unsigned long long)f, (unsigned long long)g_pass_serial, (unsigned long long)t.colors[0],
+        color ? color->width : 0, color ? color->height : 0, unsigned(t.views.level[0]),
+        (unsigned long long)t.depth, depth ? depth->width : 0, depth ? depth->height : 0, unsigned(t.views.level[8]),
+        g_pass_extent.width, g_pass_extent.height, unsigned(g_state.has_viewport),
+        g_state.viewport[0], g_state.viewport[1], g_state.viewport[2], g_state.viewport[3],
+        double(vp.x), double(vp.y), double(vp.width), double(vp.height), unsigned(g_state.depth.depth_test),
+        unsigned(g_state.depth.depth_write), g_state.depth.depth_func);
+}
+
 void restart_stats(uint32_t mode, const Cmd& c) {
     static const bool on = std::getenv("NX_RESTART_STATS") != nullptr;
     if (!on) return;
@@ -870,6 +923,7 @@ bool draw(VkCommandBuffer cb, const Targets& t, uint32_t mode, bool indexed, con
         vp.x *= 0.75f, vp.y *= 0.75f, vp.width *= 0.75f, vp.height *= 0.75f;
         sc = {{sc.offset.x * 3 / 4, sc.offset.y * 3 / 4}, {sc.extent.width * 3 / 4, sc.extent.height * 3 / 4}};
     }
+    p4g_trace_resolution(tt, vp);
     const OriginViewport mapped = origin_viewport(lower_left, vp.y, vp.height);
     vp.y = mapped.y, vp.height = mapped.height;
 

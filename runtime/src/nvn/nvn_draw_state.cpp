@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <nx/game.h>
 
 #include "nvn_draw_state.h"
 #include "platform.h"
@@ -136,9 +137,17 @@ void draw_command(VkCommandBuffer cb, const Cmd& c, const CmdList& list, const T
             static uint64_t reports = 0, types_seen = 0;
             if (c.n < 64 && !(types_seen >> c.n & 1)) types_seen |= 1ull << c.n, log("nvn: first counter report of type %u", c.n);
             if (uint8_t* p = const_cast<uint8_t*>(guest_bytes(c.a[0]))) {
-                // NX_FAKE_GPU_TIME=1: every report of a submit carries the submit's start (a GPU with no cost):
-                // the game picks its present interval from the timings it measures (bisecting its 30 fps mode).
-                static const bool fake = std::getenv("NX_FAKE_GPU_TIME") != nullptr;
+                // Experimental P4G default: do not report CPU replay latency as GPU work. Reports in one submit
+                // share its start time; this is synthetic timing, not a hardware GPU timestamp. P4G can opt out
+                // with NX_FAKE_GPU_TIME=0. Other games retain the original presence-based environment switch.
+                static const bool fake = [] {
+                    const char* e = std::getenv("NX_FAKE_GPU_TIME");
+                    const bool p4g = std::strcmp(game::kInfo.id, "p4g") == 0;
+                    const bool on = p4g ? (!e || std::strcmp(e, "0") != 0) : e != nullptr;
+                    if (p4g) log("p4g: GPU counter timing=%s source=%s (experimental; not hardware GPU time)",
+                                 on ? "submit-start" : "host-replay", e ? "override" : "default");
+                    return on;
+                }();
                 uint64_t v[2] = {++reports, fake ? submit_start_ns() : plat::monotonic_ns()};
                 std::memcpy(p, v, sizeof v);
                 dedup_invalidate(p, sizeof v);

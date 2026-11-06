@@ -215,8 +215,9 @@ public class Launcher extends Activity {
                 "Disable motion blur (experimental)", new String[] {"1", "0"},
                 new String[] {"Desactivado", "Activado"}, new String[] {"Off", "On"}, 0));
         options.add(new Option("NX_LOD_BIAS", "Nitidez de texturas 3D (experimental)",
-                "3D texture sharpness (experimental)", new String[] {"0", "-0.5"},
-                new String[] {"Original", "Más nítidas"}, new String[] {"Original", "Sharper"}, 0));
+                "3D texture sharpness (experimental)", new String[] {"0", "-0.5", "-1"},
+                new String[] {"Original", "Más nítidas", "Más nítidas (-1, prueba)"},
+                new String[] {"Original", "Sharper", "Sharper (-1, test)"}, 0));
         options.add(new Option("NX_TOUCH_SHOW", "Controles táctiles", "On-screen controls", new String[] {"1", "0"},
                 new String[] {"Activados", "Desactivados"}, new String[] {"On", "Off"}, 0));
         options.add(new Option("NX_TOUCH_SIZE", "Tamaño de los botones", "Button size",
