@@ -15,6 +15,7 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.ViewGroup;
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.FileReader;
 import java.util.Locale;
 import java.util.Map;
@@ -31,6 +32,8 @@ final class PerformanceOverlay {
     private volatile boolean surfaceReady;
     private volatile int generation;
     private long lastTime, lastCpu, lastFrames;
+    private final int cpuCores = Math.max(1, Runtime.getRuntime().availableProcessors());
+    private String gpuCounter;
     private boolean gpuUnavailable;
 
     PerformanceOverlay(GameActivity activity, Map<String, String> config) {
@@ -83,7 +86,8 @@ final class PerformanceOverlay {
                 if (fps) append(text, first || elapsed <= 0 || frames < 0 || lastFrames < 0 ? "FPS: —" :
                         String.format(Locale.US, "FPS: %.1f", Math.max(0L, frames - lastFrames) * 1000.0 / elapsed));
                 if (cpu) append(text, first || elapsed <= 0 ? "CPU app: —" :
-                        String.format(Locale.US, "CPU app: %.0f%%", Math.max(0L, used - lastCpu) * 100.0 / elapsed));
+                        String.format(Locale.US, "CPU app: %.0f%%", Math.min(100.0,
+                                Math.max(0L, used - lastCpu) * 100.0 / (elapsed * cpuCores))));
                 if (gpu) append(text, "GPU: " + gpuUsage());
                 if (ram) append(text, "RAM app: " + residentMemory());
                 lastTime = now; lastCpu = used; lastFrames = frames; first = false;
@@ -146,12 +150,67 @@ final class PerformanceOverlay {
     private String gpuUsage() {
         if (gpuUnavailable) return "N/A";
         try {
-            // KGSL supplies busy/total time for its sampling interval, not per-process usage.
-            String[] values = read("/sys/class/kgsl/kgsl-3d0/gpubusy").split("\\s+");
-            long busy = Long.parseLong(values[0]), total = Long.parseLong(values[1]);
-            if (total <= 0 || busy < 0 || busy > total) return "N/A";
-            return String.format(Locale.US, "%.0f%%", busy * 100.0 / total);
+            if (gpuCounter == null) gpuCounter = findGpuCounter();
+            if (gpuCounter == null) { gpuUnavailable = true; return "N/A"; }
+            double value = parseGpuUsage(read(gpuCounter));
+            if (value < 0.0) { gpuUnavailable = true; return "N/A"; }
+            return String.format(Locale.US, "%.0f%%", value);
         } catch (Exception ignored) { gpuUnavailable = true; return "N/A"; }
+    }
+
+    /** Finds readable Adreno KGSL or Mali/devfreq utilization without assuming an SoC-specific address. */
+    private static String findGpuCounter() {
+        String[] direct = {
+            "/sys/class/kgsl/kgsl-3d0/gpubusy",
+            "/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage",
+            "/sys/class/misc/mali0/device/utilization",
+            "/sys/class/misc/mali0/device/utilisation",
+            "/sys/class/misc/mali0/device/load",
+            "/sys/class/misc/mali0/device/gpu_load",
+            "/sys/kernel/gpu/gpu_busy",
+            "/sys/devices/platform/mali/utilization",
+            "/sys/devices/platform/gpusysfs/gpu_busy"
+        };
+        for (String path : direct) if (validGpuCounter(path)) return path;
+
+        // Mali device addresses differ between Exynos/MediaTek chips. Discover the devfreq node by name.
+        File root = new File("/sys/class/devfreq");
+        File[] nodes = root.listFiles();
+        if (nodes == null) return null;
+        for (File node : nodes) {
+            String identity = node.getName().toLowerCase(Locale.US);
+            try { identity += " " + read(new File(node, "name").getPath()).toLowerCase(Locale.US); }
+            catch (Exception ignored) { }
+            if (!(identity.contains("mali") || identity.contains("gpu"))) continue;
+            for (String field : new String[] {"load", "utilization", "utilisation", "gpu_load", "gpu_busy"}) {
+                String path = new File(node, field).getPath();
+                if (validGpuCounter(path)) return path;
+            }
+        }
+        return null;
+    }
+
+    private static boolean validGpuCounter(String path) {
+        try { return parseGpuUsage(read(path)) >= 0.0; }
+        catch (Exception ignored) { return false; }
+    }
+
+    /** Accepts percentages, Mali's "load@frequency" and KGSL's "busy total" formats. */
+    private static double parseGpuUsage(String raw) {
+        String[] fields = raw.trim().split("[^0-9.]+");
+        double first = -1.0, second = -1.0;
+        for (String field : fields) {
+            if (field.length() == 0) continue;
+            try {
+                if (first < 0.0) first = Double.parseDouble(field);
+                else { second = Double.parseDouble(field); break; }
+            } catch (NumberFormatException ignored) { }
+        }
+        if (first < 0.0) return -1.0;
+        if (raw.indexOf('@') >= 0 || raw.indexOf('%') >= 0 || second < 0.0)
+            return first <= 100.0 ? first : -1.0;
+        if (second <= 0.0 || first > second) return -1.0;
+        return Math.min(100.0, first * 100.0 / second);
     }
 
     private static String residentMemory() {

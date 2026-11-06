@@ -777,15 +777,24 @@ void request_immersive() {
 }  // namespace
 
 // Frames presented so far, for the launcher's FPS counter (GameActivity.nativeFrames, in the game's own process).
+// RegisterNatives below also keeps this callable when hidden visibility and section GC discard name lookup.
+static jlong native_frames(JNIEnv*, jclass) { return jlong(nx::g_frame.load()); }
 extern "C" JNIEXPORT jlong JNICALL Java_io_github_belmantegu_wonderrecomp_GameActivity_nativeFrames(JNIEnv*, jclass) {
-    return jlong(nx::g_frame.load());
+    return native_frames(nullptr, nullptr);
 }
 extern "C" JNIEXPORT jlong JNICALL Java_io_github_p4grecomp_GameActivity_nativeFrames(JNIEnv*, jclass) {
-    return jlong(nx::g_frame.load());
+    return native_frames(nullptr, nullptr);
 }
 
 extern "C" JNIEXPORT void ANativeActivity_onCreate(ANativeActivity* activity, void* saved, size_t size) {
     g_activity = activity;
+    jclass activity_class = activity->env->GetObjectClass(activity->clazz);
+    JNINativeMethod frames_method{const_cast<char*>("nativeFrames"), const_cast<char*>("()J"),
+                                  reinterpret_cast<void*>(native_frames)};
+    if (activity->env->RegisterNatives(activity_class, &frames_method, 1) != JNI_OK &&
+        activity->env->ExceptionCheck())
+        activity->env->ExceptionClear();
+    activity->env->DeleteLocalRef(activity_class);
     if (g_ui_pipe[0] < 0 && pipe2(g_ui_pipe, O_NONBLOCK | O_CLOEXEC) == 0)
         ALooper_addFd(ALooper_forThread(), g_ui_pipe[0], ALOOPER_POLL_CALLBACK, ALOOPER_EVENT_INPUT, on_ui_request, nullptr);
     glue_ANativeActivity_onCreate(activity, saved, size);
