@@ -1,7 +1,9 @@
 package io.github.p4grecomp;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
@@ -45,6 +47,7 @@ public class ControlsEditor extends Activity {
     static final int STICK = 14;
 
     float[][] pos = new float[NAMES.length][];
+    boolean[] hidden = new boolean[NAMES.length];
     float sizeScale = 1;
     EditorView view;
 
@@ -63,6 +66,7 @@ public class ControlsEditor extends Activity {
         }
         reset("1".equals(config.get("NX_TOUCH_MIRROR")));
         parse(config.get("NX_TOUCH_LAYOUT"));
+        parseHidden(config.get("NX_TOUCH_HIDDEN"));
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(P4gTheme.BACKGROUND);
@@ -79,6 +83,9 @@ public class ControlsEditor extends Activity {
         help.setTextSize(15);
         help.setGravity(Gravity.CENTER);
         middle.addView(help);
+        Button visibility = button(t("Mostrar / ocultar botones", "Show / hide buttons"), Color.rgb(70, 70, 70));
+        visibility.setOnClickListener(v -> showVisibility());
+        middle.addView(visibility);
         LinearLayout bar = new LinearLayout(this);
         bar.setGravity(Gravity.CENTER);
         bar.setPadding(0, dp(12), 0, 0);
@@ -101,6 +108,9 @@ public class ControlsEditor extends Activity {
             public void onClick(View v) {
                 Map<String, String> config = Launcher.readConfig(configFile());
                 config.put("NX_TOUCH_LAYOUT", serialize());
+                String hiddenButtons = serializeHidden();
+                if (hiddenButtons.isEmpty()) config.remove("NX_TOUCH_HIDDEN");
+                else config.put("NX_TOUCH_HIDDEN", hiddenButtons);
                 if (Launcher.writeConfig(configFile(), config)) {
                     Toast.makeText(ControlsEditor.this, t("Controles guardados", "Controls saved"), Toast.LENGTH_SHORT).show();
                     finish();
@@ -145,8 +155,60 @@ public class ControlsEditor extends Activity {
     }
 
     void reset(boolean mirrored) {
-        for (int i = 0; i < NAMES.length; i++) pos[i] = DEFAULTS[i].clone();
+        for (int i = 0; i < NAMES.length; i++) {
+            pos[i] = DEFAULTS[i].clone();
+            hidden[i] = false;
+        }
         if (mirrored) pos[STICK][0] = 1 - pos[STICK][0];
+    }
+
+    // Stable position keys match the runtime; visible labels follow the Xbox mapping above.
+    void parseHidden(String value) {
+        if (value == null) return;
+        for (String name : value.split(","))
+            for (int i = 0; i < NAMES.length; i++)
+                if (i != STICK && NAMES[i].equals(name.trim())) hidden[i] = true;
+    }
+
+    String serializeHidden() {
+        StringBuilder s = new StringBuilder();
+        for (int i = 0; i < NAMES.length; i++) {
+            if (i == STICK || !hidden[i]) continue;
+            if (s.length() > 0) s.append(',');
+            s.append(NAMES[i]);
+        }
+        return s.toString();
+    }
+
+    void showVisibility() {
+        final int[] indices = new int[NAMES.length - 1];
+        final String[] labels = new String[indices.length];
+        final boolean[] shown = new boolean[indices.length];
+        for (int i = 0, k = 0; i < NAMES.length; i++) {
+            if (i == STICK) continue;
+            indices[k] = i;
+            labels[k] = i >= 10 && i <= 13 ? t("Cruceta ", "D-pad ") + LABELS[i] : LABELS[i];
+            shown[k++] = !hidden[i];
+        }
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(t("Botones visibles", "Visible buttons"))
+                .setMultiChoiceItems(labels, shown, (d, which, checked) -> shown[which] = checked)
+                .setPositiveButton(t("Aplicar", "Apply"), (d, which) -> {
+                    for (int k = 0; k < indices.length; k++) hidden[indices[k]] = !shown[k];
+                    view.group = -1;
+                    view.invalidate();
+                })
+                .setNegativeButton(t("Cancelar", "Cancel"), null)
+                .setNeutralButton(t("Mostrar todos", "Show all"), null)
+                .create();
+        dialog.setOnShowListener(d -> dialog.getButton(DialogInterface.BUTTON_NEUTRAL).setOnClickListener(v -> {
+            for (int k = 0; k < shown.length; k++) {
+                shown[k] = true;
+                dialog.getListView().setItemChecked(k, true);
+            }
+        }));
+        dialog.setOnDismissListener(d -> hideSystemBars());
+        dialog.show();
     }
 
     void parse(String layout) {  // NAME:x,y,r;... (what serialize() writes; the runtime reads the same)
@@ -193,7 +255,7 @@ public class ControlsEditor extends Activity {
         boolean touches(int i) {
             float w = getWidth(), h = getHeight();
             for (int j = 0; j < NAMES.length; j++)
-                if (GROUP[j] != GROUP[i]
+                if (!hidden[j] && GROUP[j] != GROUP[i]
                         && Math.hypot((pos[i][0] - pos[j][0]) * w, (pos[i][1] - pos[j][1]) * h) < radius(i) + radius(j))
                     return true;
             return false;
@@ -203,6 +265,7 @@ public class ControlsEditor extends Activity {
         protected void onDraw(Canvas c) {
             float w = getWidth(), h = getHeight();
             for (int i = 0; i < NAMES.length; i++) {
+                if (hidden[i]) continue;
                 float cx = pos[i][0] * w, cy = pos[i][1] * h, r = radius(i);
                 boolean bad = touches(i), held = GROUP[i] == group;
                 paint.setStyle(Paint.Style.FILL);
@@ -229,6 +292,7 @@ public class ControlsEditor extends Activity {
                     group = -1;
                     float best = 1e9f;
                     for (int i = 0; i < NAMES.length; i++) {
+                        if (hidden[i]) continue;
                         float d = (float) Math.hypot(e.getX() - pos[i][0] * w, e.getY() - pos[i][1] * h) / radius(i);
                         if (d < 1.3f && d < best) {
                             best = d;
