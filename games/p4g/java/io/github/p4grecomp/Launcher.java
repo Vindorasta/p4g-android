@@ -299,17 +299,16 @@ public class Launcher extends Activity {
         hint.setPadding(0, 0, 0, dp(8));
         body.addView(hint);
         card.addView(body);
-        String preference = "ui_group_" + key;
-        boolean expanded = prefs().getBoolean(preference, false);
-        body.setVisibility(expanded ? View.VISIBLE : View.GONE);
-        header.setText((expanded ? "−  " : "+  ") + title);
-        header.setContentDescription(title + (expanded ? ", collapse" : ", expand"));
+        // A fresh visit to the launcher always starts compact. Keeping this state in
+        // SharedPreferences made every drawer come back open after the user expanded it once.
+        body.setVisibility(View.GONE);
+        header.setText("+  " + title);
+        header.setContentDescription(title + ", expand");
         header.setOnClickListener(v -> {
             boolean open = body.getVisibility() != View.VISIBLE;
             body.setVisibility(open ? View.VISIBLE : View.GONE);
             header.setText((open ? "−  " : "+  ") + title);
             header.setContentDescription(title + (open ? ", collapse" : ", expand"));
-            prefs().edit().putBoolean(preference, open).apply();
         });
         return body;
     }
