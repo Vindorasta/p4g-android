@@ -212,6 +212,10 @@ public class Launcher extends Activity {
                 new String[] {"30 FPS", "60 FPS"}, new String[] {"30 FPS", "60 FPS"}, 0));
         options.add(new Option("NX_SHOW_FPS", "Contador de FPS", "FPS counter", new String[] {"0", "1"},
                 new String[] {"Desactivado", "Activado"}, new String[] {"Off", "On"}, 0));
+        for (String metric : new String[] {"CPU", "GPU", "RAM"}) {
+            options.add(new Option("NX_OVERLAY_" + metric, metric, metric, new String[] {"0", "1"},
+                    new String[] {"Desactivado", "Activado"}, new String[] {"Off", "On"}, 0));
+        }
         options.add(new Option("NX_AFFINITY", "Afinidad de CPU (experimental)", "CPU affinity (experimental)",
                 new String[] {"0", "2", "1"}, new String[] {"Automática", "Núcleos rápidos", "Separar hilos de cuadro"},
                 new String[] {"Automatic", "Performance cores", "Split frame threads"}, 0));
@@ -382,6 +386,9 @@ public class Launcher extends Activity {
                 t("Copias de seguridad y traducciones", "Backups, translations and mod manager"));
         LinearLayout diagnostics = settingsGroup(root, "diagnostics", t("Diagnóstico", "Diagnostics"),
                 t("Exportar registros para reportar errores", "Export logs for bug reports"));
+        LinearLayout overlay = settingsGroup(root, "overlay", "Overlay",
+                t("Durante el juego. CPU: 100% = un núcleo; RAM: memoria residente del juego. GPU no disponible en todos los teléfonos.",
+                  "In-game stats. CPU: 100% = one core; RAM: game resident memory. GPU usage is unavailable on some phones."));
         boolean controlOptions = false;
         for (final Option o : options) {
             if ("NX_TOUCH_SHOW".equals(o.key)) controlOptions = true;
@@ -415,7 +422,8 @@ public class Launcher extends Activity {
                 }
             });
             value.setTag(o);
-            (controlOptions ? controls : graphics).addView(row);
+            (o.key.equals("NX_SHOW_FPS") || o.key.startsWith("NX_OVERLAY_") ? overlay :
+                    controlOptions ? controls : graphics).addView(row);
         }
         addDriverRow(graphics);
         addLogsRow(diagnostics);

@@ -528,12 +528,6 @@ void* custom_vulkan() {
     std::string hooks = info.dli_fname;
     hooks.resize(hooks.rfind('/') + 1);
     const std::string dir = root + folder + "/";
-    // A marker left behind means initialization did not return (crash or process termination).
-    { std::ofstream pending(root + "pending.txt"); pending << path << '\n'; }
-    auto record = [&](const std::string& result) {
-        { std::ofstream status(root + "last-run.txt"); status << result << '\n'; }
-        std::remove((root + "pending.txt").c_str());
-    };
     if (powervr) {
         // Mesa PVR identifies itself as non-conformant and refuses to initialize without this explicit opt-in.
         setenv("PVR_I_WANT_A_BROKEN_VULKAN_DRIVER", "1", 1);
@@ -556,14 +550,12 @@ void* custom_vulkan() {
                                        minimum_api, powervr, xclipse);
     const bool loaded = module_loaded(library);
     if (!loaded || !verified) {
-        record("System driver (" + library + (loaded ? ": failed verification)" : ": did not load)"));
         nx::log("gpu driver: %s %s; using system driver", library.c_str(),
                 loaded ? "failed verification" : "did not load");
         return nullptr;
     }
     nx::log("gpu driver: using %s (%s)", library.c_str(),
             panvk ? "PanVK" : powervr ? "PowerVR" : xclipse ? "Xclipse" : "Turnip");
-    record(library + " (custom driver initialized)");
     return gipa;
 }
 
@@ -576,11 +568,6 @@ void* vulkan_get_instance_proc_addr() {
         if (void* custom = custom_vulkan()) return custom;
 #endif
         void* lib = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
-        if (g_app && g_app->activity->internalDataPath) {
-            const std::string root = std::string(g_app->activity->internalDataPath) + "/gpu_driver/";
-            std::ifstream selected(root + "active.txt");
-            if (!selected.good()) { std::ofstream status(root + "last-run.txt"); status << "System driver\n"; }
-        }
         return lib ? dlsym(lib, "vkGetInstanceProcAddr") : nullptr;
     }();
     return gipa;
@@ -791,6 +778,9 @@ void request_immersive() {
 
 // Frames presented so far, for the launcher's FPS counter (GameActivity.nativeFrames, in the game's own process).
 extern "C" JNIEXPORT jlong JNICALL Java_io_github_belmantegu_wonderrecomp_GameActivity_nativeFrames(JNIEnv*, jclass) {
+    return jlong(nx::g_frame.load());
+}
+extern "C" JNIEXPORT jlong JNICALL Java_io_github_p4grecomp_GameActivity_nativeFrames(JNIEnv*, jclass) {
     return jlong(nx::g_frame.load());
 }
 

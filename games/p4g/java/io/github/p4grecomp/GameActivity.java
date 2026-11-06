@@ -14,11 +14,15 @@ import java.io.File;
 public class GameActivity extends NativeActivity {
     private AlertDialog exitDialog;
     private Object backCallback;
+    private PerformanceOverlay performanceOverlay;
+    static native long nativeFrames();
 
     @Override protected void onCreate(Bundle state) {
         // The installed payload is checked by the launcher; no source URI, NSP descriptor or keys are opened here.
         try {
             File data = Launcher.dataDir();
+            // Android draws the metrics panel; avoid duplicating the native FPS digits.
+            Os.setenv("NX_SHOW_FPS", "0", true);
             File installed = Launcher.installationDir(this);
             if (!InstalledGameFiles.present(installed))
                 throw new java.io.IOException("Game installation is incomplete. Install the game again from its NSP/XCI.");
@@ -36,6 +40,8 @@ public class GameActivity extends NativeActivity {
             return;
         }
         super.onCreate(state);
+        performanceOverlay = new PerformanceOverlay(this,
+                Launcher.readConfig(new File(Launcher.dataDir(), "config.txt")));
         if (Build.VERSION.SDK_INT >= 33) backCallback = Api33.register(this);
     }
 
@@ -71,7 +77,16 @@ public class GameActivity extends NativeActivity {
         }
         return super.dispatchKeyEvent(event);
     }
+    @Override protected void onResume() {
+        super.onResume();
+        if (performanceOverlay != null) performanceOverlay.start();
+    }
+    @Override protected void onPause() {
+        if (performanceOverlay != null) performanceOverlay.stop();
+        super.onPause();
+    }
     @Override protected void onDestroy() {
+        if (performanceOverlay != null) performanceOverlay.close();
         if (Build.VERSION.SDK_INT >= 33 && backCallback != null) Api33.unregister(this, backCallback);
         if (exitDialog != null) exitDialog.dismiss();
         super.onDestroy();
