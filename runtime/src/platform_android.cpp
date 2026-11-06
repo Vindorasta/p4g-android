@@ -15,6 +15,7 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <jni.h>
+#include <link.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
@@ -410,7 +411,26 @@ float default_render_scale() {
 #if defined(NX_CUSTOM_DRIVER)
 namespace {
 
-bool probe_vulkan(PFN_vkGetInstanceProcAddr gipa, VkDriverId driver) {
+bool module_loaded(const std::string& library) {
+    struct Search {
+        const std::string& library;
+        bool found = false;
+    } search{library};
+    dl_iterate_phdr([](dl_phdr_info* info, size_t, void* opaque) {
+        auto& current = *static_cast<Search*>(opaque);
+        const char* path = info->dlpi_name;
+        if (!path) return 0;
+        const char* base = std::strrchr(path, '/');
+        if (current.library == (base ? base + 1 : path)) {
+            current.found = true;
+            return 1;
+        }
+        return 0;
+    }, &search);
+    return search.found;
+}
+
+bool probe_vulkan(PFN_vkGetInstanceProcAddr gipa, VkDriverId driver, VkDriverId alternate = VkDriverId{}) {
     if (!gipa) return false;
     auto create = reinterpret_cast<PFN_vkCreateInstance>(gipa(nullptr, "vkCreateInstance"));
     if (!create) return false;
@@ -437,7 +457,8 @@ bool probe_vulkan(PFN_vkGetInstanceProcAddr gipa, VkDriverId driver) {
                 VkPhysicalDeviceProperties2 props{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
                 props.pNext = &identity;
                 properties(devices[i], &props);
-                if (identity.driverID == driver && props.properties.apiVersion >= VK_API_VERSION_1_3) {
+                if ((identity.driverID == driver || (alternate && identity.driverID == alternate)) &&
+                    props.properties.apiVersion >= VK_API_VERSION_1_3) {
                     matches = true;
                     break;
                 }
@@ -449,7 +470,7 @@ bool probe_vulkan(PFN_vkGetInstanceProcAddr gipa, VkDriverId driver) {
 }
 
 // Adapted from P5R Android v0.5.3. The custom-driver hook is independent of
-// KGSL memory import, so it can also load Android PanVK packages on Mali.
+// KGSL memory import, so it can also load Android PanVK and PowerVR packages.
 void* custom_vulkan() {
     if (!g_app || !g_app->activity->internalDataPath) return nullptr;
     if (const char* value = std::getenv("NX_SYSTEM_DRIVER"); value && std::strcmp(value, "1") == 0)
@@ -462,8 +483,9 @@ void* custom_vulkan() {
     if (slash == std::string::npos) return nullptr;
     const std::string folder = path.substr(0, slash), library = path.substr(slash + 1);
     const bool panvk = folder.starts_with("panvk-");
-    if (!panvk && !folder.starts_with("turnip-")) return nullptr;
-    const size_t prefix = panvk ? 6 : 7;
+    const bool powervr = folder.starts_with("powervr-");
+    if (!panvk && !powervr && !folder.starts_with("turnip-")) return nullptr;
+    const size_t prefix = panvk ? 6 : powervr ? 8 : 7;
     if (folder.size() != prefix + 36 || folder.find_first_not_of("0123456789abcdef-", prefix) != std::string::npos ||
         library.empty() || !library.ends_with(".so") ||
         library.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-") != std::string::npos)
@@ -476,12 +498,19 @@ void* custom_vulkan() {
     void* handle = adrenotools_open_libvulkan(RTLD_NOW | RTLD_LOCAL, ADRENOTOOLS_DRIVER_CUSTOM, nullptr,
                                              hooks.c_str(), dir.c_str(), library.c_str(), nullptr, nullptr);
     void* gipa = handle ? dlsym(handle, "vkGetInstanceProcAddr") : nullptr;
-    if (!probe_vulkan(reinterpret_cast<PFN_vkGetInstanceProcAddr>(gipa),
-                      panvk ? VK_DRIVER_ID_MESA_PANVK : VK_DRIVER_ID_MESA_TURNIP)) {
-        nx::log("gpu driver: %s failed verification; using system driver", library.c_str());
+    const VkDriverId expected = panvk ? VK_DRIVER_ID_MESA_PANVK
+        : powervr ? VK_DRIVER_ID_IMAGINATION_PROPRIETARY : VK_DRIVER_ID_MESA_TURNIP;
+    // VK_DRIVER_ID_IMAGINATION_OPEN_SOURCE_MESA is value 25. Keep the numeric fallback so this also builds
+    // with Android NDK Vulkan headers that predate that enum name.
+    const VkDriverId alternate = powervr ? static_cast<VkDriverId>(25) : VkDriverId{};
+    const bool verified = probe_vulkan(reinterpret_cast<PFN_vkGetInstanceProcAddr>(gipa), expected, alternate);
+    const bool loaded = module_loaded(library);
+    if (!loaded || !verified) {
+        nx::log("gpu driver: %s %s; using system driver", library.c_str(),
+                loaded ? "failed verification" : "did not load");
         return nullptr;
     }
-    nx::log("gpu driver: using %s (%s)", library.c_str(), panvk ? "PanVK" : "Turnip");
+    nx::log("gpu driver: using %s (%s)", library.c_str(), panvk ? "PanVK" : powervr ? "PowerVR" : "Turnip");
     return gipa;
 }
 

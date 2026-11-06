@@ -22,7 +22,7 @@ import java.util.zip.ZipFile;
 /** Driver loading is based on P5R Android v0.5.3. Saved packages remain available when switching drivers. */
 final class CustomDrivers {
     private static final long MAX_BYTES = 256L * 1024 * 1024;
-    private static final String PACKAGE_NAME = "(turnip|panvk)-[0-9a-f-]{36}";
+    private static final String PACKAGE_NAME = "(turnip|panvk|powervr)-[0-9a-f-]{36}";
 
     private CustomDrivers() {}
 
@@ -90,7 +90,8 @@ final class CustomDrivers {
             }
             // Older builds kept only active.txt and the libraries, without display metadata.
             if (active.startsWith(folder.getName() + "/")) {
-                String family = folder.getName().startsWith("panvk-") ? "PanVK" : "Turnip";
+                String family = folder.getName().startsWith("panvk-") ? "PanVK"
+                        : folder.getName().startsWith("powervr-") ? "PowerVR" : "Turnip";
                 return new Driver(active, family + " (previous import)", "", family.equals("PanVK") ? 31 : 29);
             }
         } catch (Exception e) {
@@ -154,7 +155,7 @@ final class CustomDrivers {
             if (family.isEmpty()) family = familyHint(metadata.optString("name") + " "
                     + metadata.optString("driverVersion") + " " + name);
             if (family.isEmpty()) family = binaryFamily(new File(staged, library));
-            if (family.isEmpty()) throw new IOException("Choose a Turnip or PanVK driver package.");
+            if (family.isEmpty()) throw new IOException("Choose a Turnip, PanVK, or PowerVR driver package.");
             int minApi = Math.max(metadata.optInt("minApi", 0), family.equals("panvk") ? 31 : 29);
             if (minApi > Build.VERSION.SDK_INT) throw new IOException("The driver requires a newer Android version.");
             String display = label(metadata.optString("name"));
@@ -228,7 +229,7 @@ final class CustomDrivers {
                     ByteArrayOutputStream out = new ByteArrayOutputStream();
                     try (InputStream in = zip.getInputStream(entry)) { copy(in, out, 16 * 1024); }
                     metadata = new JSONObject(out.toString("UTF-8"));
-                } else if (libraryName(name) && libraries.put(name, entry) != null) {
+                } else if (packageLibraryName(name) && libraries.put(name, entry) != null) {
                     throw new IOException("Driver ZIP has duplicate library names.");
                 }
             }
@@ -254,11 +255,12 @@ final class CustomDrivers {
         String text = value.toLowerCase(Locale.ROOT);
         if (text.contains("panvk") || text.contains("panfrost")) return "panvk";
         if (text.contains("turnip") || text.contains("freedreno")) return "turnip";
+        if (text.contains("powervr") || text.contains("imagination") || text.contains("pvr_")) return "powervr";
         return "";
     }
 
     private static String binaryFamily(File library) throws IOException {
-        boolean turnip = false, panvk = false;
+        boolean turnip = false, panvk = false, powervr = false;
         String tail = "";
         byte[] buffer = new byte[65536];
         try (InputStream in = new FileInputStream(library)) {
@@ -266,11 +268,14 @@ final class CustomDrivers {
                 String text = tail + new String(buffer, 0, n, StandardCharsets.ISO_8859_1);
                 turnip |= text.contains("Turnip") || text.contains("tu_GetInstanceProcAddr");
                 panvk |= text.contains("PanVK") || text.contains("panvk_GetInstanceProcAddr");
+                powervr |= text.contains("PowerVR") || text.contains("Imagination") ||
+                        text.contains("pvr_GetInstanceProcAddr");
                 tail = text.substring(Math.max(0, text.length() - 32));
             }
         }
-        if (turnip == panvk) return "";
-        return panvk ? "panvk" : "turnip";
+        int matches = (turnip ? 1 : 0) + (panvk ? 1 : 0) + (powervr ? 1 : 0);
+        if (matches != 1) return "";
+        return panvk ? "panvk" : powervr ? "powervr" : "turnip";
     }
 
     private static String label(String text) {
@@ -285,6 +290,11 @@ final class CustomDrivers {
 
     private static boolean libraryName(String name) {
         return name.matches("[A-Za-z0-9_][A-Za-z0-9._-]{0,127}\\.so");
+    }
+
+    /** Dependency libraries may use '+' (notably libc++_shared.so), but can never become the selected entrypoint. */
+    private static boolean packageLibraryName(String name) {
+        return name.matches("[A-Za-z0-9_+][A-Za-z0-9._+-]{0,127}\\.so");
     }
 
     private static long copy(InputStream in, OutputStream out, long limit) throws IOException {
