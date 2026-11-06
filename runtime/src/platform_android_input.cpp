@@ -130,6 +130,17 @@ void sample_gamepad_left(uint64_t now) {
 // Temporary analog diagnosis: one aggregate per second, at most 300 lines per process. All access is under g_in.
 // Record Android input separately from the merged pad, so a low physical sample, a second input device, and a
 // touch/script override can be distinguished. These observers never change movement or discard input events.
+bool analog_trace_enabled() {
+    static const bool on = [] {
+        const char* aggregate = std::getenv("NX_P4G_ANALOG_TRACE");
+        const char* detail = std::getenv("NX_P4G_STICK_TRACE");
+        const char* verbose = std::getenv("NX_VERBOSE_LOG");
+        return (aggregate && aggregate[0] == '1') || (detail && detail[0] == '1') ||
+               (verbose && verbose[0] == '1');
+    }();
+    return on;
+}
+
 struct AnalogTrace {
     uint64_t next_ns = 0, last_event_ns = 0, sequence = 0;
     unsigned lines = 0, events = 0, switches = 0, zeros = 0, reads = 0, touch_reads = 0;
@@ -432,7 +443,7 @@ int32_t on_input(android_app* app, AInputEvent* e) {
         if (AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_RTRIGGER, 0) > 0.4f ||
             AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_GAS, 0) > 0.4f)
             g_pad_buttons.buttons |= kZR;
-        if (p4g_input()) trace_controller(AInputEvent_getDeviceId(e), src, AMotionEvent_getAction(e),
+        if (p4g_input() && analog_trace_enabled()) trace_controller(AInputEvent_getDeviceId(e), src, AMotionEvent_getAction(e),
                 AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_X, 0),
                 -AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_Y, 0), monotonic_ns());
         return 1;
@@ -554,7 +565,7 @@ static void read_pad_impl(PadState& p, bool sample_buttons) {
     input_script(p);  // NX_INPUT_SCRIPT (config.txt): scripted runs on the phone, as on the Mac
     if (p.lx != before_script_lx || p.ly != before_script_ly) analog_origin = "script";
     g_left_read_origin = analog_origin;
-    if (sample_buttons && queued) trace_merged(p, analog_origin, analog_touch_left, now);
+    if (sample_buttons && queued && analog_trace_enabled()) trace_merged(p, analog_origin, analog_touch_left, now);
 }
 
 void read_pad(PadState& p) { read_pad_impl(p, true); }

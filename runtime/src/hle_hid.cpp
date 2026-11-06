@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include <nx/game.h>
 #include <nx/runtime.h>
 
 #include "platform.h"
@@ -24,6 +25,18 @@ using namespace plat;
 
 constexpr uint32_t kStyleFullKey = 1u << 0;
 uint64_t g_sampling = 0;
+
+bool hid_trace_enabled() {
+    static const bool requested = [] {
+        if (std::strcmp(game::kInfo.id, "p4g") != 0) return true;
+        const char* aggregate = std::getenv("NX_P4G_ANALOG_TRACE");
+        const char* detail = std::getenv("NX_P4G_STICK_TRACE");
+        const char* verbose = std::getenv("NX_VERBOSE_LOG");
+        return (aggregate && aggregate[0] == '1') || (detail && detail[0] == '1') ||
+               (verbose && verbose[0] == '1');
+    }();
+    return g_trace || requested;
+}
 
 // Scripted input for automated runs: NX_INPUT="3300:A,3900:A,4200:Down" holds the button for 8 frames from the
 // given presented frame.
@@ -92,7 +105,7 @@ void GetNpadState(CPU& c) {
     uint32_t id = ld<uint32_t>(c.x[1]);
     std::memset(reinterpret_cast<void*>(out), 0, 0x28);
     st<int64_t>(out, int64_t(++g_sampling));
-    {
+    if (hid_trace_enabled()) {
         static std::set<std::pair<uint32_t, std::string>> seen;
         static std::mutex m;
         std::lock_guard lk(m);
@@ -102,7 +115,7 @@ void GetNpadState(CPU& c) {
     PadState p = read();
     static bool pressed = false;
     if (p.buttons && !pressed) log("hid: first buttons %llx", (unsigned long long)p.buttons), pressed = true;
-    {   // what the game is given on a diagonal (both axes well off centre): the first 60 samples, one in five
+    if (hid_trace_enabled()) {  // optional diagnosis: first 60 diagonal samples, one in five
         static std::mutex diagnostic_lock;
         std::lock_guard diagnostic_guard(diagnostic_lock);
         static int diag = 0, skip = 0;
@@ -134,7 +147,7 @@ void GetNpadState(CPU& c) {
 // Wonder ignores the return value and reads all 16 entries it asks for, telling new samples by their sampling
 // numbers, so every call adds a sample and returns up to 16 of the latest (older entries stay as they were).
 void GetNpadStatesFullKey(CPU& c) {
-    {
+    if (hid_trace_enabled()) {
         static std::atomic<uint64_t> calls{0};
         uint64_t n = ++calls;
         if (n % 3000 == 0) log("hid: %llu full-key reads (lr %s)", (unsigned long long)n, describe(c.x[30]).c_str());
@@ -165,7 +178,7 @@ void GetNpadStatesFullKey(CPU& c) {
 }
 
 void GetNpadStatesOther(CPU& c) {
-    {
+    if (hid_trace_enabled()) {
         static std::set<std::pair<uint32_t, std::string>> seen;
         static std::mutex m;
         std::lock_guard lk(m);

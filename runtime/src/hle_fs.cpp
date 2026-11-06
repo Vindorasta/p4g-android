@@ -479,7 +479,7 @@ void OpenFile(CPU& c) {  // (FileHandle* out, path, int mode: 1 read, 2 write, 4
     FILE* f = plat::fopen_utf8(utf8(p), (mode & 2) ? "r+b" : "rb");
     if (!f) {
         note_open("OpenFile", guest, "the host could not open it");
-        if (trace_fs()) log("fs: OpenFile(%s) failed to open on the host (errno %d)", guest.c_str(), errno);
+        log("fs: OpenFile(%s) failed to open on the host (errno %d)", guest.c_str(), errno);
         c.x[0] = kPathNotFound;
         return;
     }

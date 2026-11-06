@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <mutex>
@@ -51,7 +52,23 @@ thread_local const char* t_missing_name = nullptr;
 
 // ---- logging ---------------------------------------------------------
 
+namespace {
+bool compact_trace(const char* text) {
+    return std::strncmp(text, "p4g: HLE enter ", 15) == 0 ||
+           std::strncmp(text, "p4g: HLE exit ", 14) == 0 ||
+           std::strncmp(text, "svc 0x", 6) == 0 ||
+           std::strncmp(text, "nvn/vk: pipeline: ", 18) == 0;
+}
+}  // namespace
+
 void log(const char* fmt, ...) {
+    static const bool verbose = [] {
+        const char* e = std::getenv("NX_VERBOSE_LOG");
+        return e && e[0] == '1';
+    }();
+    // Reject fixed-format call traces before formatting arguments or taking the file lock.
+    if (!verbose && compact_trace(fmt)) return;
+
     char buf[2048];
     va_list ap;
     va_start(ap, fmt);
@@ -60,16 +77,7 @@ void log(const char* fmt, ...) {
 
     // Compact diagnostics by default. Keep errors and subsystem diagnostics;
     // omit successful call-by-call traces that can grow to gigabytes.
-    static const bool verbose = [] {
-        const char* e = std::getenv("NX_VERBOSE_LOG");
-        return e && e[0] == '1';
-    }();
-    if (!verbose && (
-        std::strncmp(buf, "p4g: HLE enter ", 15) == 0 ||
-        std::strncmp(buf, "p4g: HLE exit ", 14) == 0 ||
-        std::strncmp(buf, "svc 0x", 6) == 0 ||
-        std::strncmp(buf, "nvn/vk: pipeline: ", 18) == 0))
-        return;
+    if (!verbose && compact_trace(buf)) return;
 
     std::lock_guard lk(g_log_lock);
 
@@ -89,7 +97,7 @@ void log(const char* fmt, ...) {
 
         g_log_file = std::fopen(file.c_str(), "w");
         if (g_log_file && !verbose)
-            std::fprintf(g_log_file, "p4g: compact log effects-v1 (repetitive call traces disabled)\n");
+            std::fprintf(g_log_file, "p4g: compact log effects-v2 (detailed IPC, file and analog traces are opt-in)\n");
     }
 
     plat::log_line(buf);

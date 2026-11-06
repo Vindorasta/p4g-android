@@ -1,6 +1,7 @@
 ﻿// HIPC message parsing / building, sessions, domains and the service manager (sm:).
 #include "ipc.h"
 
+#include <cstdlib>
 #include <mutex>
 #include <unordered_map>
 
@@ -28,6 +29,15 @@ std::recursive_mutex g_ipc;
 
 constexpr uint32_t kSFCI = 0x49434653;  // 'SFCI'
 constexpr uint32_t kSFCO = 0x4F434653;  // 'SFCO'
+
+bool trace_ipc() {
+    static const bool requested = [] {
+        const char* ipc = std::getenv("NX_TRACE_IPC");
+        const char* verbose = std::getenv("NX_VERBOSE_LOG");
+        return (ipc && ipc[0] == '1') || (verbose && verbose[0] == '1');
+    }();
+    return g_trace || requested;
+}
 
 }  // namespace
 
@@ -272,14 +282,16 @@ uint32_t ipc_request(CPU& c, uint32_t handle, uint64_t buf, uint64_t) {
             }
         }
 
-        log(
+        const bool trace = trace_ipc();
+        if (trace) log(
             "p4g: IPC request service=%s cmd=%u",
             target->name.c_str(),
             ctx.cmd
         );
         rc = target->handle(ctx);
 
-        log(
+        // Failed results remain visible even when successful call-by-call tracing is off.
+        if (trace || rc != 0) log(
             "p4g: IPC response service=%s cmd=%u "
             "result=0x%08X data_bytes=%zu objects=%zu "
             "copy_handles=%zu move_handles=%zu",

@@ -36,7 +36,7 @@ public class GameActivity extends NativeActivity {
             Os.setenv("NX_KEYS", keys.getPath(), true);
             File title = Launcher.keysFile(this, "title.keys");
             if (title.isFile()) Os.setenv("NX_TITLE_KEYS", title.getPath(), true);
-            Os.setenv("NX_TRACE_FS", "1", true);
+            // File-open tracing is opt-in through NX_TRACE_FS=1 in config.txt.
         } catch (Exception e) {
             startActivity(menuIntent().putExtra("game_error", String.valueOf(e.getMessage())));
             android.os.Process.killProcess(android.os.Process.myPid());
