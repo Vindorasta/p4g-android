@@ -92,6 +92,73 @@ bool p4g_input() {
     return enabled;
 }
 
+// Temporary analog diagnosis: one aggregate per second, at most 300 lines per process. All access is under g_in.
+// Record Android input separately from the merged pad, so a low physical sample, a second input device, and a
+// touch/script override can be distinguished. These observers never change movement or discard input events.
+struct AnalogTrace {
+    uint64_t next_ns = 0, last_event_ns = 0, sequence = 0;
+    unsigned lines = 0, events = 0, switches = 0, zeros = 0, reads = 0, touch_reads = 0;
+    int32_t device = -1, source = 0, action = 0, min_device = -1;
+    float x = 0, y = 0, min_x = 0, min_y = 0;
+    double raw_min = 1e30, raw_max = 0, merged_min = 1e30, merged_max = 0;
+    int32_t min_lx = 0, min_ly = 0;
+    const char* min_origin = "none";
+    bool seen = false;
+} g_analog_trace;
+
+void trace_controller(int32_t device, int32_t source, int32_t action, float x, float y, uint64_t now) {
+    auto& d = g_analog_trace;
+    if (d.lines >= 300) return;
+    if (!d.seen) nx::log("hid: analog-trace-v2 enabled (1 Hz aggregates; max 300 lines; mapping unchanged)");
+    if (d.last_event_ns && d.device != device) ++d.switches;
+    d.seen = true;
+    d.device = device, d.source = source, d.action = action;
+    d.x = x, d.y = y, d.last_event_ns = now;
+    ++d.sequence, ++d.events;
+    const double radius = std::hypot(double(x), double(y));
+    if (radius < d.raw_min) d.raw_min = radius, d.min_x = x, d.min_y = y, d.min_device = device;
+    d.raw_max = std::max(d.raw_max, radius);
+    if (radius <= 0.12) ++d.zeros;
+}
+
+void trace_merged(const PadState& p, const char* origin, bool touch_left, uint64_t now) {
+    auto& d = g_analog_trace;
+    if (d.lines >= 300) return;
+    if (!d.seen && touch_left) {
+        nx::log("hid: analog-trace-v2 enabled (1 Hz aggregates; max 300 lines; mapping unchanged)");
+        d.seen = true;
+    }
+    if (!d.seen) return;
+    // Do not spend the trace budget while sitting in a menu with no movement.
+    const bool recent = d.last_event_ns && now - d.last_event_ns < 5'000'000'000ull;
+    if (!recent && !touch_left && !p.lx && !p.ly) { d.next_ns = 0; return; }
+    if (!d.next_ns) d.next_ns = now + 1'000'000'000ull;
+    ++d.reads;
+    if (touch_left) ++d.touch_reads;
+    const double radius = std::hypot(double(p.lx), double(p.ly)) / kStickMax;
+    if (radius < d.merged_min) {
+        d.merged_min = radius, d.min_lx = p.lx, d.min_ly = p.ly, d.min_origin = origin;
+    }
+    d.merged_max = std::max(d.merged_max, radius);
+    if (now < d.next_ns) return;
+    nx::log("hid: analog-trace-v2 t_ms=%llu seq=%llu events=%u switches=%u dev=%d src=%#x action=%d "
+            "age_ms=%llu raw=(%.4f,%.4f) raw_range=%.4f..%.4f raw_min=(%.4f,%.4f,dev=%d) zeros=%u "
+            "mapped=(%d,%d) merged=(%d,%d,%s) merged_range=%.4f..%.4f merged_min=(%d,%d,%s) "
+            "reads=%u touch_reads=%u",
+            (unsigned long long)(now / 1'000'000), (unsigned long long)d.sequence, d.events, d.switches,
+            int(d.device), unsigned(d.source), int(d.action),
+            (unsigned long long)(d.last_event_ns ? (now - d.last_event_ns) / 1'000'000 : 0),
+            double(d.x), double(d.y), d.events ? d.raw_min : -1.0, d.events ? d.raw_max : -1.0,
+            double(d.min_x), double(d.min_y), int(d.min_device), d.zeros,
+            int(g_pad_buttons.lx), int(g_pad_buttons.ly), int(p.lx), int(p.ly), origin,
+            d.merged_min, d.merged_max, int(d.min_lx), int(d.min_ly), d.min_origin, d.reads, d.touch_reads);
+    ++d.lines;
+    d.next_ns = now + 1'000'000'000ull;
+    d.events = d.switches = d.zeros = d.reads = d.touch_reads = 0;
+    d.raw_min = d.merged_min = 1e30;
+    d.raw_max = d.merged_max = 0;
+}
+
 uint64_t held_touch_buttons() {
     uint64_t held = 0;
     for (const auto& t : g_touches) held |= t.button;
@@ -297,6 +364,9 @@ int32_t on_input(android_app* app, AInputEvent* e) {
         if (AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_RTRIGGER, 0) > 0.4f ||
             AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_GAS, 0) > 0.4f)
             g_pad_buttons.buttons |= kZR;
+        if (p4g_input()) trace_controller(AInputEvent_getDeviceId(e), src, AMotionEvent_getAction(e),
+                AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_X, 0),
+                -AMotionEvent_getAxisValue(e, AMOTION_EVENT_AXIS_Y, 0), monotonic_ns());
         return 1;
     }
     if ((src & AINPUT_SOURCE_TOUCHSCREEN) != AINPUT_SOURCE_TOUCHSCREEN) return 0;
@@ -362,8 +432,11 @@ bool headless() {  // NX_HEADLESS (platform.h)
 
 static void read_pad_impl(PadState& p, bool sample_buttons) {
     std::lock_guard lk(g_in);
+    const char* analog_origin = "none";
+    bool analog_touch_left = false;
     p.buttons |= g_pad_buttons.buttons;
     if (g_pad_buttons.lx || g_pad_buttons.ly) {
+        analog_origin = "controller";
         p.lx = g_pad_buttons.lx;
         p.ly = g_pad_buttons.ly;
     }
@@ -384,6 +457,8 @@ static void read_pad_impl(PadState& p, bool sample_buttons) {
     for (const auto& t : g_touches) {
         float dx = (t.x - t.x0) / radius, dy = (t.y - t.y0) / radius;
         if (t.stick == kLeftStick) {
+            analog_origin = "touch";
+            analog_touch_left = true;
             float sx = dx * stick_sens();
             float sy = -dy * stick_sens();
             if (p4g_input()) {
@@ -406,7 +481,10 @@ static void read_pad_impl(PadState& p, bool sample_buttons) {
             p.buttons |= t.button;
         }
     }
+    const int32_t before_script_lx = p.lx, before_script_ly = p.ly;
     input_script(p);  // NX_INPUT_SCRIPT (config.txt): scripted runs on the phone, as on the Mac
+    if (p.lx != before_script_lx || p.ly != before_script_ly) analog_origin = "script";
+    if (sample_buttons && queued) trace_merged(p, analog_origin, analog_touch_left, now);
 }
 
 void read_pad(PadState& p) { read_pad_impl(p, true); }
