@@ -96,13 +96,14 @@ public class ImportActivity extends Activity {
         running = true;
 
 
-        status.setText("Opening the game... Additional shaders will be generated on first use and may briefly pause gameplay.");
+        status.setText("Installing game data... Keep this screen open and allow enough free space for the extracted game. The NSP/XCI will not be needed after installation succeeds.");
 
         new Thread(new Runnable() {
             @Override
             public void run() {
                 int rc;
                 String error = "";
+                File staged = null;
 
                 try (
                     ParcelFileDescriptor pfd =
@@ -114,6 +115,7 @@ public class ImportActivity extends Activity {
                             "Could not open the NSP/XCI"
                         );
                     }
+                    staged = InstalledGameFiles.begin(data);
 
                     int jobs = Math.max(
                         2,
@@ -128,13 +130,17 @@ public class ImportActivity extends Activity {
                         titleKeys.exists()
                             ? titleKeys.getPath()
                             : "",
-                        data.getPath(),
+                        staged.getPath(),
                         work.getPath(),
                         jobs
                     );
 
                     if (rc != 0) {
                         error = Importer.error();
+                    } else {
+                        InstalledGameFiles.finish(staged);
+                        InstalledGameFiles.publish(data, staged);
+                        staged = null;
                     }
 
                 } catch (Exception e) {
@@ -142,6 +148,11 @@ public class ImportActivity extends Activity {
                     error = String.valueOf(
                         e.getMessage()
                     );
+                } finally {
+                    if (staged != null) {
+                        try { InstalledGameFiles.discard(data, staged); }
+                        catch (IOException ignored) { }
+                    }
                 }
 
                 final int result = rc;
@@ -156,8 +167,8 @@ public class ImportActivity extends Activity {
                         if (isFinishing() || isDestroyed()) return;
                         if (result == 0) {
                             bar.setProgress(1000);
-                            status.setText("Preparation complete.");
-                            Toast.makeText(ImportActivity.this, "Preparation complete", Toast.LENGTH_LONG).show();
+                            status.setText("Game installed. The NSP/XCI is no longer required to play.");
+                            Toast.makeText(ImportActivity.this, "Game installed. The NSP/XCI is no longer required to play.", Toast.LENGTH_LONG).show();
                             setResult(RESULT_OK);
                             finish();
                         } else {
@@ -186,19 +197,27 @@ public class ImportActivity extends Activity {
 
                 int value;
 
-                if (phase <= 1) {
+                if (phase == 7) {
+                    value = 710;
+                } else if (phase == 6) {
+                    value = 50 + (int) (650 * share);
+                } else if (phase <= 1) {
                     value = 20;
                 } else if (phase == 2) {
-                    value = 50 + (int) (200 * share);
+                    value = 700 + (int) (50 * share);
                 } else if (phase == 3) {
-                    value = 250 + (int) (730 * share);
+                    value = 750 + (int) (230 * share);
                 } else {
                     value = 990;
                 }
 
                 bar.setProgress(value);
 
-                if (phase == 2) {
+                if (phase == 7) {
+                    status.setText("Checking the local shader compiler...");
+                } else if (phase == 6) {
+                    status.setText("Extracting and checking game data (" + (int) (100 * share) + "%)...");
+                } else if (phase == 2) {
                     status.setText(
                         "Scanning game modules (" +
                         done + " of " + total + ")..."

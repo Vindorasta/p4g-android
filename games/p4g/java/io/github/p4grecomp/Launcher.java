@@ -90,7 +90,7 @@ public class Launcher extends Activity {
         return Api30Helper.isExternalStorageManager();
     }
 
-    // ---- the game file, read in place at every start ----
+    // ---- source game file (needed only while installing the local game data) ----
 
     SharedPreferences prefs() { return getSharedPreferences("game", MODE_PRIVATE); }
 
@@ -111,10 +111,8 @@ public class Launcher extends Activity {
     }
 
     boolean prepared() {
-        String uri = gameUri();
-        if (uri == null || !uri.equals(prefs().getString("p4g_prepared_uri", ""))) return false;
         try {
-            return PreparationFiles.ready(new File(dataDir(), "spirv"));
+            return InstalledGameFiles.ready(dataDir());
         } catch (Exception e) { Log.w("P4G-Launch", "Preparation must be repeated", e); return false; }
     }
 
@@ -315,7 +313,7 @@ public class Launcher extends Activity {
         play = new Button(this);
         P4gTheme.button(play, true);
         play.setAllCaps(false);
-        play.setText("Prepare");
+        play.setText("Install game");
         play.setTextSize(20);
         root.addView(play, new LinearLayout.LayoutParams(-1, dp(64)));
         play.setOnClickListener(v -> {
@@ -497,13 +495,11 @@ public class Launcher extends Activity {
     void launchAfterShaderInstall() {
         if (importingSaves || importingCpk || importingDriver || (modManager != null && modManager.busy())
                 || (driverSelector != null && driverSelector.busy())) return;
-        if (!readyForPlay || !gameReadable() || !hasKeys()) { refresh(); return; }
+        if (!readyForPlay) { refresh(); return; }
         try { SaveFiles.recover(); }
         catch (IOException e) { tell("Save recovery failed", String.valueOf(e.getMessage())); return; }
         save();
         Intent i = new Intent(this, GameActivity.class);
-        i.setData(Uri.parse(gameUri()));
-        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         i.putExtra(ImportActivity.EXTRA_NAME, gameName());
         startActivity(i);
     }
@@ -515,10 +511,10 @@ public class Launcher extends Activity {
         status.setText("Checking preparation...");
         new Thread(() -> {
             final boolean access = hasAccess();
-            final boolean readable = access && gameUri() != null && gameReadable();
+            final boolean ready = access && prepared();
+            final boolean readable = access && !ready && gameUri() != null && gameReadable();
             final boolean keys = hasKeys();
-            final boolean ready = readable && keys && prepared();
-            final String shaderError = access ? PreparationFiles.failure(new File(dataDir(), "spirv")) : "";
+            final String shaderError = access ? PreparationFiles.failure(InstalledGameFiles.shaders(dataDir())) : "";
             runOnUiThread(() -> {
                 if (generation != refreshGeneration || isFinishing() || isDestroyed()) return;
                 readyForPlay = ready;
@@ -532,16 +528,16 @@ public class Launcher extends Activity {
                 updateButtons(getWindow().getDecorView());
                 play.setEnabled(true);
                 if (ready) {
-                    status.setText(gameName() + "\nNew effects may briefly pause while their shaders are prepared.");
+                    status.setText("Game installed — NSP/XCI not required.\nNew effects may briefly pause while their shaders are prepared.");
                     play.setText(t("Jugar", "Play"));
                 } else {
                     String game = gameUri() == null ? "No game selected" : gameName();
                     status.setText(game + "\nprod.keys: " + (keys ? "selected" : "not selected") +
                         (!access ? "\nAllow file access to prepare the game." :
                          !readable && gameUri() != null ? "\nSelect the game file again." :
-                         readable && keys ? "\nPrepare the game to continue." : "") +
+                         readable && keys ? "\nInstall the game data to continue. Keep the NSP/XCI until installation finishes." : "") +
                         (shaderError.isEmpty() ? "" : "\nShader generation failed:\n" + shaderError));
-                    play.setText(!access ? "Allow access" : "Prepare");
+                    play.setText(!access ? "Allow access" : "Install game");
                 }
             });
         }, "P4G-setup-check").start();
@@ -595,7 +591,7 @@ public class Launcher extends Activity {
         if (request == PREPARE) {
             if (result == RESULT_OK && gameUri() != null) {
                 prefs().edit().putString("p4g_prepared_uri", gameUri()).apply();
-                Log.i("P4G-Launch", "Preparation complete for selected URI");
+                Log.i("P4G-Launch", "Local game installation complete");
             }
             refresh();
             return;

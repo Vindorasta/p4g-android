@@ -3,10 +3,8 @@ package io.github.p4grecomp;
 import android.app.AlertDialog;
 import android.app.NativeActivity;
 import android.content.Intent;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.ParcelFileDescriptor;
 import android.system.Os;
 import android.view.InputDevice;
 import android.view.KeyEvent;
@@ -18,25 +16,18 @@ public class GameActivity extends NativeActivity {
     private Object backCallback;
 
     @Override protected void onCreate(Bundle state) {
-        // File descriptors and environment variables cannot be passed from
-        // the launcher's process. Open the game here, before native loading.
+        // The installed payload is checked by the launcher; no source URI, NSP descriptor or keys are opened here.
         try {
-            Uri uri = getIntent().getData();
-            if (uri == null) throw new java.io.IOException("Select the game again.");
-            ParcelFileDescriptor descriptor = getContentResolver().openFileDescriptor(uri, "r");
-            if (descriptor == null) throw new java.io.IOException("Could not open the game.");
-            File keys = Launcher.keysFile(this, "prod.keys");
-            if (!keys.isFile() || keys.length() == 0) {
-                descriptor.close();
-                throw new java.io.IOException("Select prod.keys again.");
+            File data = Launcher.dataDir();
+            if (!InstalledGameFiles.present(data))
+                throw new java.io.IOException("Game installation is incomplete. Install the game again from its NSP/XCI.");
+            Os.unsetenv("NX_GAME_FD");
+            Os.unsetenv("NX_GAME_NSP");
+            Os.unsetenv("NX_GAME_NAME");
+            Os.setenv("NX_P4G_INSTALLED", "1", true);
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(new File(getFilesDir(), "data_root.txt"))) {
+                out.write((data.getCanonicalPath() + "\n").getBytes("UTF-8"));
             }
-            Os.setenv("NX_GAME_FD", String.valueOf(descriptor.detachFd()), true);
-            String name = getIntent().getStringExtra(ImportActivity.EXTRA_NAME);
-            Os.setenv("NX_GAME_NAME", name == null ? "P4G.nsp" : name, true);
-            Os.setenv("NX_KEYS", keys.getPath(), true);
-            File title = Launcher.keysFile(this, "title.keys");
-            if (title.isFile()) Os.setenv("NX_TITLE_KEYS", title.getPath(), true);
-            // File-open tracing is opt-in through NX_TRACE_FS=1 in config.txt.
         } catch (Exception e) {
             startActivity(menuIntent().putExtra("game_error", String.valueOf(e.getMessage())));
             android.os.Process.killProcess(android.os.Process.myPid());

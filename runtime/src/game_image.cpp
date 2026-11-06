@@ -8,11 +8,14 @@
 #endif
 
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <vector>
 
 #include <nx/runtime.h>
+#include <nx/game.h>
+#include "platform.h"
 
 namespace nx {
 
@@ -43,6 +46,10 @@ std::string base_name(const std::string& p) {
 }
 
 void open_image() {
+    if (game_files_root() != plat::data_root()) {
+        log("game: using installed data at %s (NSP/XCI not required)", game_files_root().c_str());
+        return;
+    }
     const char* fd = std::getenv("NX_GAME_FD");
     const char* path = std::getenv("NX_GAME_NSP");
     if (!(fd && *fd) && !(path && *path)) return;
@@ -76,6 +83,14 @@ void open_image() {
 }
 
 }  // namespace
+
+std::string game_files_root() {
+    static const bool installed = [] {
+        const char* e = std::getenv("NX_P4G_INSTALLED");
+        return std::strcmp(game::kInfo.id, "p4g") == 0 && e && e[0] == '1';
+    }();
+    return plat::data_root() + (installed ? "/game" : "");
+}
 
 const nxi::GameImage* game_image() {
     std::call_once(g_once, open_image);

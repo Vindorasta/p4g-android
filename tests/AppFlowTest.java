@@ -26,6 +26,75 @@ public class AppFlowTest {
         }
         return out;
     }
+    static void installationFixture(File stage, String content) throws IOException {
+        byte[] nso = new byte[0x100]; nso[0] = 'N'; nso[1] = 'S'; nso[2] = 'O'; nso[3] = '0';
+        bytes(new File(stage, "exefs/main"), nso); bytes(new File(stage, "exefs/sdk"), nso);
+        text(new File(stage, "extract/romfs/CPK/data.cpk"), content);
+        text(new File(stage, "analysis/main.bin"), "flat");
+        text(new File(stage, "spirv/prepared.tsv"), PreparationFiles.FORMAT + "\n");
+        text(new File(stage, ".import/complete"), "checked import\n");
+        text(new File(stage, ".import/index.tsv"), "exefs\t4\t00000000\tanalysis/main.bin\nromfs\t" +
+                content.getBytes("UTF-8").length + "\t00000000\textract/romfs/CPK/data.cpk\n");
+    }
+    static void installedGameTests(File parent) throws Exception {
+        File root = new File(parent, "installed-game-test"); root.mkdirs();
+        text(new File(root, "user/save/data0001.bin"), "keep save");
+        text(new File(root, "mods/translation/romfs/CPK/data.cpk"), "keep mod");
+        text(new File(root, "config.txt"), "NX_TOUCH_HIDDEN=L3\n");
+        text(new File(root, "spirv/prepared.tsv"), PreparationFiles.FORMAT + "\n");
+        check(!InstalledGameFiles.ready(root)); // Old shader-only preparation cannot skip installation.
+        File stage = InstalledGameFiles.begin(root);
+        try { InstalledGameFiles.begin(root); throw new AssertionError("Concurrent preparation accepted"); }
+        catch (IOException expected) { }
+        installationFixture(stage, "installed data");
+        InstalledGameFiles.finish(stage); check(!new File(stage, "analysis").exists());
+        InstalledGameFiles.publish(root, stage);
+        check(InstalledGameFiles.ready(root) && InstalledGameFiles.present(root));
+        // No source NSP, URI, prod.keys or title.keys exists in this fixture.
+        check("installed data".equals(new String(Files.readAllBytes(new File(root, "game/extract/romfs/CPK/data.cpk").toPath()), "UTF-8")));
+        File original = InstalledGameFiles.game(root);
+        stage = InstalledGameFiles.begin(root); installationFixture(stage, "bad");
+        Files.delete(new File(stage, "exefs/sdk").toPath());
+        try { InstalledGameFiles.finish(stage); throw new AssertionError("Missing sdk accepted"); }
+        catch (IOException expected) { }
+        InstalledGameFiles.discard(root, stage); check(InstalledGameFiles.ready(root));
+        stage = InstalledGameFiles.begin(root); installationFixture(stage, "cannot publish"); InstalledGameFiles.finish(stage);
+        File cannotRename = new File(stage.getPath()) { @Override public boolean renameTo(File destination) { return false; } };
+        try { InstalledGameFiles.publish(root, cannotRename); throw new AssertionError("Failed publication accepted"); }
+        catch (IOException expected) { }
+        InstalledGameFiles.discard(root, stage); check(InstalledGameFiles.ready(root));
+        stage = InstalledGameFiles.begin(root); installationFixture(stage, "replacement");
+        text(new File(stage, ".import/index.tsv"), "romfs\t1\t00000000\t../outside\n");
+        try { InstalledGameFiles.finish(stage); throw new AssertionError("Unsafe index accepted"); }
+        catch (IOException expected) { }
+        InstalledGameFiles.discard(root, stage);
+        // Interrupted swap restores the previous complete payload.
+        File previous = new File(root, ".game-previous"); Files.move(original.toPath(), previous.toPath());
+        check(InstalledGameFiles.ready(root) && original.exists());
+        Files.move(original.toPath(), previous.toPath());
+        text(new File(original, "installed.tsv"), "incomplete\n");
+        check(InstalledGameFiles.ready(root)); // Invalid new payload is quarantined and the valid backup restored.
+        stage = InstalledGameFiles.begin(root); installationFixture(stage, "new data");
+        InstalledGameFiles.finish(stage); InstalledGameFiles.publish(root, stage);
+        check(InstalledGameFiles.ready(root) && !previous.exists());
+        // A truncated extracted asset blocks Play; duplicate/unsafe manifests do too.
+        File asset = new File(root, "game/extract/romfs/CPK/data.cpk");
+        text(asset, "x"); check(!InstalledGameFiles.ready(root)); text(asset, "new data");
+        File manifest = new File(root, "game/installed.tsv");
+        String valid = new String(Files.readAllBytes(manifest.toPath()), "UTF-8");
+        text(manifest, valid + "file\t8\textract/romfs/CPK/data.cpk\n"); check(!InstalledGameFiles.ready(root));
+        text(manifest, valid); check(InstalledGameFiles.ready(root));
+        // 64-bit sizes: files above 2 GiB must not overflow readiness or require reading all their bytes.
+        stage = InstalledGameFiles.begin(root); installationFixture(stage, "large");
+        long size = 3L * 1024 * 1024 * 1024 + 1;
+        try (RandomAccessFile large = new RandomAccessFile(new File(stage, "extract/romfs/CPK/data.cpk"), "rw")) { large.setLength(size); }
+        text(new File(stage, ".import/index.tsv"), "romfs\t" + size + "\t00000000\textract/romfs/CPK/data.cpk\n");
+        InstalledGameFiles.finish(stage); InstalledGameFiles.publish(root, stage); check(InstalledGameFiles.ready(root));
+        check("keep save".equals(new String(Files.readAllBytes(new File(root, "user/save/data0001.bin").toPath()), "UTF-8")));
+        check("keep mod".equals(new String(Files.readAllBytes(new File(root, "mods/translation/romfs/CPK/data.cpk").toPath()), "UTF-8")));
+        check(new String(Files.readAllBytes(new File(root, "config.txt").toPath()), "UTF-8").equals("NX_TOUCH_HIDDEN=L3\n"));
+        System.out.println("PASS: installed data without NSP/keys, atomic replacement/recovery, incomplete imports, paths, 64-bit sizes and saves/mods/settings isolation");
+    }
     public static void main(String[] args) throws Exception {
         File temp = Files.createTempDirectory("p4g-flow-test").toFile();
         System.setProperty("p4g.test.root", temp.getPath());
@@ -113,6 +182,7 @@ public class AppFlowTest {
         // A damaged runtime module is retried on use, independently of preparation.
         bytes(new File(runtime, "fedcba9876543210.spv"), new byte[20]);
         check(PreparationFiles.ready(runtime));
+        installedGameTests(temp);
         System.out.println("PASS: actual ZIP/folder import, backup, round trip, rollback, save paths and preparation readiness");
     }
 }

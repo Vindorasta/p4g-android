@@ -3,6 +3,7 @@
 //   NX_GAME_FD + NX_GAME_NAME   a descriptor the Android launcher opened for the file the player picked, and its name
 //   NX_GAME_NSP                 or the file's path (the PC)
 //   NX_KEYS                     the player's prod.keys (NX_TITLE_KEYS: title.keys, when the dump needs it)
+//   NX_P4G_INSTALLED=1           P4G: ignore the source container and use <data>/game/{exefs,extract/romfs,spirv}
 // Without NX_GAME_FD / NX_GAME_NSP the data folder's exefs/ and extract/romfs/ are used, as before.
 #pragma once
 
@@ -14,6 +15,9 @@ namespace nx {
 
 // The image, opened on first use; null when no game file is configured. A configured file that does not open is fatal.
 const nxi::GameImage* game_image();
+
+// P4G's installed ExeFS/RomFS/shader payload; configuration, saves and mods remain in plat::data_root().
+std::string game_files_root();
 
 // A RomFS path for the image: '/'-separated, no leading or doubled slashes, "." parts dropped.
 std::string game_image_path(const std::string& path);

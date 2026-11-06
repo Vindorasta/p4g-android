@@ -307,7 +307,7 @@ void MountRom(CPU& c) {
         g_image_mounts[name] = true;
         log("fs: mounted %s: -> the game file's RomFS", name.c_str());
     } else {
-        mount(name, data_root() / "extract" / "romfs");
+        mount(name, fs::u8path(game_files_root()) / "extract" / "romfs");
     }
     c.x[0] = kOk;
 }
@@ -824,7 +824,7 @@ std::string read_game_file(const std::string& relative_to_romfs) {
         s.resize(size_t(img->read(*e, 0, s.data(), e->size)));
         return s;
     }
-    FILE* f = plat::fopen_utf8(utf8(data_root() / "extract" / "romfs" / fs::u8path(relative_to_romfs)), "rb");
+    FILE* f = plat::fopen_utf8(utf8(fs::u8path(game_files_root()) / "extract" / "romfs" / fs::u8path(relative_to_romfs)), "rb");
     if (!f) return {};
     std::string s;
     char buf[65536];

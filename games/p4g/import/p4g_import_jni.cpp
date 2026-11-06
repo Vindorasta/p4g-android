@@ -2,6 +2,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -30,6 +31,10 @@ bool write(const std::filesystem::path& path, const std::string& text) {
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     f << text; f.flush(); return bool(f);
 }
+struct OwnedFd {
+    int value;
+    ~OwnedFd() { if (value >= 0) close(value); }
+};
 int run(int fd, const std::string& name, const std::string& keys, const std::string& title_keys,
         const std::string& data_dir) {
     std::unique_lock guard(run_lock, std::try_to_lock);
@@ -43,20 +48,38 @@ int run(int fd, const std::string& name, const std::string& keys, const std::str
         if (!root.is_absolute() || root == root.root_path() || root.lexically_normal() != root)
             return fail("Invalid data directory");
         std::vector<nxi::InputFile> inputs{{name, fd}};
-        int k = open(keys.c_str(), O_RDONLY | O_CLOEXEC);
-        if (k < 0) return fail("prod.keys not found");
-        inputs.push_back({"prod.keys", k});
-        int t = title_keys.empty() ? -1 : open(title_keys.c_str(), O_RDONLY | O_CLOEXEC);
-        if (t >= 0) inputs.push_back({"title.keys", t});
+        OwnedFd k{open(keys.c_str(), O_RDONLY | O_CLOEXEC)};
+        if (k.value < 0) return fail("prod.keys not found");
+        inputs.push_back({"prod.keys", k.value});
+        OwnedFd t{title_keys.empty() ? -1 : open(title_keys.c_str(), O_RDONLY | O_CLOEXEC)};
+        if (t.value >= 0) inputs.push_back({"title.keys", t.value});
         std::string error;
         auto game = nxi::GameImage::open(inputs, 0, error);
-        close(k); if (t >= 0) close(t);
         if (!game) return fail(error.empty() ? "Could not open the game" : error);
         if ((game->title_id() & ~0xfffull) != 0x010062B01525C000ull) return fail("Title ID does not match P4G");
         if (!game->exefs().count("main")) return fail("The game has no main executable");
         if (!nx::nvn::local::available(error)) return fail(error);
 
         fs::create_directories(root);
+        // The caller provides a private staging directory. Extract with the existing checked,
+        // streaming importer; no game image or keys are required by the installed runtime.
+        nxi::Options options;
+        options.out_dir = root.string();
+        options.title_id = 0x010062B01525C000ull;
+        options.keep_exefs = true;
+        options.on_progress = [](const nxi::Progress& p) {
+            phase = 6; total = 1000;
+            const double share = p.total ? double(std::min(p.done, p.total)) / double(p.total) : 0;
+            done = p.phase == "done" ? 1000 : p.phase == "romfs" ? 150 + int(850 * share) :
+                   p.phase == "exefs" ? 50 + int(100 * share) : int(50 * share);
+        };
+        phase = 6; done = 0; total = 1000;
+        if (nxi::run_import(inputs, options, error) != 0)
+            return fail(error.empty() ? "Game extraction failed" : error);
+        if (!fs::is_regular_file(root / "exefs/main") || !fs::is_regular_file(root / "exefs/sdk"))
+            return fail("The extracted game is missing main or sdk");
+        phase = 7;
+
         std::string suffix = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
         staging = root / ("spirv-preparing-" + suffix);
         if (!fs::create_directory(staging)) return fail("Could not create a fresh shader cache");

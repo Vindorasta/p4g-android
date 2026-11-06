@@ -2,7 +2,7 @@
 package io.github.p4grecomp;
 
 /**
- * Prepares a local Maxwell shader cache from the player's game.
+ * Extracts the player's game and prepares a local Maxwell shader cache in a private staging directory.
  */
 final class Importer {
     static {

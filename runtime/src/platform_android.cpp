@@ -752,7 +752,12 @@ static const char* const kDataProbe = "/exefs/main";  // native execution: the p
 #else
 static const char* const kDataProbe = "/analysis/main.bin";
 #endif
-static bool has_data(const std::string& root) { return access((root + kDataProbe).c_str(), R_OK) == 0; }
+static bool has_data(const std::string& root) {
+    if (std::strcmp(nx::game::kInfo.id, "p4g") == 0 &&
+            access((root + "/game/installed.tsv").c_str(), R_OK) == 0 &&
+            access((root + "/game/exefs/main").c_str(), R_OK) == 0) return true;
+    return access((root + kDataProbe).c_str(), R_OK) == 0;
+}
 
 extern "C" void android_main(android_app* app) {
     using namespace nx::plat;
