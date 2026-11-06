@@ -5,6 +5,7 @@
 // NX_PIPELINE_CACHE=0: no cache (bisecting, or to measure first-run stutter).
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 #include <atomic>
@@ -42,7 +43,13 @@ VkPipelineCache pipeline_cache() {
     p_vkGetPhysicalDeviceProperties(vk_physical(), &p);
     char name[64];
     std::snprintf(name, sizeof name, "/pipelines_%04x_%04x.bin", p.vendorID, p.deviceID);
-    g_path = plat::data_root() + name;
+    std::string identity;
+    for (uint8_t byte : p.pipelineCacheUUID) {
+        char hex[3];
+        std::snprintf(hex, sizeof hex, "%02x", unsigned(byte));
+        identity += hex;
+    }
+    g_path = plat::data_root() + std::string(name, std::strlen(name) - 4) + "_" + identity + ".bin";
     std::vector<uint8_t> data;
     if (FILE* f = plat::fopen_utf8(g_path, "rb")) {
         plat::fseek64(f, 0, SEEK_END);
@@ -58,7 +65,7 @@ VkPipelineCache pipeline_cache() {
         ci.initialDataSize = 0, ci.pInitialData = nullptr;  // a cache the driver refuses: start empty
         p_vkCreatePipelineCache(vk_device(), &ci, nullptr, &g_cache);
     }
-    g_saved_size = data.size();
+    g_saved_size = 0;
     log("nvn/vk: pipeline cache %s (%zu bytes loaded)", g_path.c_str(), data.size());
     return g_cache;
 }
@@ -73,7 +80,6 @@ void pipeline_cache_save() {
     if (FILE* f = plat::fopen_utf8(tmp, "wb")) {
         bool ok = std::fwrite(data.data(), 1, n, f) == n;
         ok = std::fclose(f) == 0 && ok;
-        std::remove(g_path.c_str());
         if (ok && std::rename(tmp.c_str(), g_path.c_str()) == 0) g_saved_size = n;
     }
 }

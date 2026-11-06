@@ -69,7 +69,9 @@ final class DriverSelector {
         int padding = P4gTheme.dp(activity, 12);
         content.setPadding(padding, padding, padding, padding);
         TextView hint = new TextView(activity);
-        hint.setText("Selection applies the next time you open the game.");
+        String last = CustomDrivers.lastRun(activity);
+        hint.setText("Selection applies the next time you open the game."
+                + (last.isEmpty() ? "" : "\nLast initialization: " + last));
         hint.setTextColor(P4gTheme.MUTED);
         hint.setPadding(0, 0, 0, padding);
         content.addView(hint);

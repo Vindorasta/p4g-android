@@ -17,6 +17,9 @@
 
 namespace {
 std::atomic<int> phase{0}, done{0}, total{0};
+std::atomic<bool> cancelled{false};
+std::atomic<uint64_t> bytes_done{0}, bytes_total{0};
+void check_cancel() { if (cancelled.load()) throw std::runtime_error("Preparation cancelled"); }
 std::mutex message_lock, run_lock;
 std::string message;
 void set_message(const std::string& text) { std::lock_guard guard(message_lock); message = text; }
@@ -43,6 +46,7 @@ int run(int fd, const std::string& name, const std::string& keys, const std::str
     namespace fs = std::filesystem;
     fs::path staging;
     try {
+        check_cancel();
         if (fd < 0) return fail("Invalid game file");
         fs::path root(data_dir);
         if (!root.is_absolute() || root == root.root_path() || root.lexically_normal() != root)
@@ -67,7 +71,9 @@ int run(int fd, const std::string& name, const std::string& keys, const std::str
         options.out_dir = root.string();
         options.title_id = 0x010062B01525C000ull;
         options.keep_exefs = true;
+        options.cancel = &cancelled;
         options.on_progress = [](const nxi::Progress& p) {
+            if (p.phase == "romfs") { bytes_done = p.done; bytes_total = p.total; }
             phase = 6; total = 1000;
             const double share = p.total ? double(std::min(p.done, p.total)) / double(p.total) : 0;
             done = p.phase == "done" ? 1000 : p.phase == "romfs" ? 150 + int(850 * share) :
@@ -79,6 +85,7 @@ int run(int fd, const std::string& name, const std::string& keys, const std::str
         if (!fs::is_regular_file(root / "exefs/main") || !fs::is_regular_file(root / "exefs/sdk"))
             return fail("The extracted game is missing main or sdk");
         phase = 7;
+        check_cancel();
 
         std::string suffix = std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
         staging = root / ("spirv-preparing-" + suffix);
@@ -92,12 +99,14 @@ int run(int fd, const std::string& name, const std::string& keys, const std::str
         phase = 2;
         total = int(game->exefs().size()); done = 0;
         for (const auto& [module, nso] : game->exefs()) {
+            check_cancel();
             if (nso.size() < 4 || std::memcmp(nso.data(), "NSO0", 4)) { ++done; continue; }
             std::vector<uint8_t> flat;
             if (!nxi::nso_to_flat_image(nso, flat, error)) throw std::runtime_error("Invalid " + module + ": " + error);
             auto blocks = p4g::maxwell_blocks(flat);
             phase = 3;
             for (const auto& block : blocks) {
+                check_cancel();
                 std::string hash = nx::nvn::shader_hash(flat.data() + block.code, block.size);
                 if (!hashes.insert(hash).second) continue;
                 if (!nx::nvn::local::compile(staging.string(), flat.data() + block.code, block.size,
@@ -107,6 +116,7 @@ int run(int fd, const std::string& name, const std::string& keys, const std::str
             ++done; phase = 2;
         }
         phase = 4;
+        check_cancel();
         std::string marker = std::string("format\t") + nx::nvn::local::kFormat + "\n";
         for (const auto& hash : hashes) {
             if (!nx::nvn::local::valid(staging.string(), hash)) throw std::runtime_error("Incomplete generated cache");
@@ -136,6 +146,17 @@ int run(int fd, const std::string& name, const std::string& keys, const std::str
 }
 }
 extern "C" {
+JNIEXPORT void JNICALL Java_io_github_p4grecomp_Importer_reset(JNIEnv*, jclass) {
+    cancelled = false; bytes_done = 0; bytes_total = 0;
+    phase = 0; done = 0; total = 0;
+}
+JNIEXPORT void JNICALL Java_io_github_p4grecomp_Importer_cancel(JNIEnv*, jclass) { cancelled = true; }
+JNIEXPORT jlongArray JNICALL Java_io_github_p4grecomp_Importer_bytes(JNIEnv* env, jclass) {
+    jlong values[] = {jlong(bytes_done.load()), jlong(bytes_total.load())};
+    auto out = env->NewLongArray(2);
+    if (out) env->SetLongArrayRegion(out, 0, 2, values);
+    return out;
+}
 JNIEXPORT jint JNICALL Java_io_github_p4grecomp_Importer_run(JNIEnv* env, jclass, jint fd, jstring name,
         jstring keys, jstring title_keys, jstring data_dir, jstring, jint) {
     return run(fd, jstr(env, name), jstr(env, keys), jstr(env, title_keys), jstr(env, data_dir));

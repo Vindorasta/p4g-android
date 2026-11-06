@@ -499,6 +499,19 @@ public class Launcher extends Activity {
         if (importingSaves || importingCpk || importingDriver || (modManager != null && modManager.busy())
                 || (driverSelector != null && driverSelector.busy())) return;
         if (!readyForPlay) { refresh(); return; }
+        if (CustomDrivers.interrupted(this)) {
+            new AlertDialog.Builder(this).setTitle("Driver initialization interrupted")
+                .setMessage("The previous custom driver initialization did not finish. Start with the system driver?")
+                .setPositiveButton("Use system driver", (d, w) -> {
+                    try { CustomDrivers.useSystem(this); CustomDrivers.acknowledge(this); launchAfterShaderInstall(); }
+                    catch (IOException e) { tell("GPU driver", e.getMessage()); }
+                })
+                .setNeutralButton("Retry custom driver", (d, w) -> {
+                    try { CustomDrivers.acknowledge(this); launchAfterShaderInstall(); }
+                    catch (IOException e) { tell("GPU driver", e.getMessage()); }
+                }).setNegativeButton("Cancel", null).show();
+            return;
+        }
         try { SaveFiles.recover(); }
         catch (IOException e) { tell("Save recovery failed", String.valueOf(e.getMessage())); return; }
         save();

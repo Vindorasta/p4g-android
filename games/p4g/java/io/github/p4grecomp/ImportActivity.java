@@ -13,15 +13,21 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.Button;
+import java.util.Locale;
 import java.io.File;
 import java.io.IOException;
 
 /** Preparation only: completion returns directly to the launcher. */
 public class ImportActivity extends Activity {
+    private static final java.util.concurrent.atomic.AtomicBoolean ACTIVE = new java.util.concurrent.atomic.AtomicBoolean();
     static final String EXTRA_URI = "uri", EXTRA_NAME = "name";
     TextView status;
     ProgressBar bar;
     volatile boolean running;
+    volatile boolean cancelRequested;
+    boolean publishing;
+    final Object commitLock = new Object();
     final Handler ui = new Handler(Looper.getMainLooper());
     int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
 
@@ -48,12 +54,26 @@ public class ImportActivity extends Activity {
         status.setTextSize(16);
         status.setPadding(0, dp(16), 0, 0);
         root.addView(status);
+        Button cancel = new Button(this);
+        cancel.setText("Cancel preparation");
+        cancel.setOnClickListener(v -> onBackPressed());
+        root.addView(cancel);
         setContentView(root);
         start();
     }
 
     @Override public void onBackPressed() {
         if (!running) { setResult(RESULT_CANCELED); finish(); }
+        else new AlertDialog.Builder(this).setTitle("Cancel preparation?")
+            .setMessage("The temporary installation will be discarded. Any previous installation stays available.")
+            .setPositiveButton("Cancel preparation", (d, w) -> {
+                synchronized (commitLock) {
+                    if (publishing) return;
+                    cancelRequested = true;
+                    Importer.cancel();
+                }
+                status.setText("Cancelling... Waiting for the current operation to finish.");
+            }).setNegativeButton("Keep preparing", null).show();
     }
     void fail(String message) {
         status.setText(message);
@@ -62,6 +82,9 @@ public class ImportActivity extends Activity {
             .setOnCancelListener(d -> { setResult(RESULT_CANCELED); finish(); }).show();
     }
     @Override protected void onDestroy() {
+        synchronized (commitLock) {
+            if (running && !publishing) { cancelRequested = true; Importer.cancel(); }
+        }
         ui.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
@@ -95,7 +118,12 @@ public class ImportActivity extends Activity {
         final File work =
             new File(getCacheDir(), "import");
 
+        if (!ACTIVE.compareAndSet(false, true)) {
+            fail("Another preparation is still finishing. Wait and try again.");
+            return;
+        }
         running = true;
+        Importer.reset();
 
 
         status.setText("Installing game data... Keep this screen open and allow enough free space for the extracted game. The NSP/XCI will not be needed after installation succeeds.");
@@ -141,6 +169,10 @@ public class ImportActivity extends Activity {
                         error = Importer.error();
                     } else {
                         InstalledGameFiles.finish(staged);
+                        synchronized (commitLock) {
+                            if (cancelRequested) throw new IOException("Preparation cancelled");
+                            publishing = true;
+                        }
                         InstalledGameFiles.publish(data, staged);
                         staged = null;
                     }
@@ -155,6 +187,8 @@ public class ImportActivity extends Activity {
                         try { InstalledGameFiles.discard(data, staged); }
                         catch (IOException ignored) { }
                     }
+                    running = false;
+                    ACTIVE.set(false);
                 }
 
                 final int result = rc;
@@ -167,6 +201,7 @@ public class ImportActivity extends Activity {
 
 
                         if (isFinishing() || isDestroyed()) return;
+                        if (cancelRequested) { setResult(RESULT_CANCELED); finish(); return; }
                         if (result == 0) {
                             bar.setProgress(1000);
                             status.setText("Game installed. The NSP/XCI is no longer required to play.");
@@ -187,6 +222,7 @@ public class ImportActivity extends Activity {
                 if (!running) {
                     return;
                 }
+                if (cancelRequested) { ui.postDelayed(this, 500); return; }
 
                 int[] p = Importer.progress();
 
@@ -218,7 +254,12 @@ public class ImportActivity extends Activity {
                 if (phase == 7) {
                     status.setText("Checking the local shader compiler...");
                 } else if (phase == 6) {
-                    status.setText("Extracting and checking game data (" + (int) (100 * share) + "%)...");
+                    long[] bytes = Importer.bytes();
+                    String sizes = bytes[1] > 0 ? String.format(Locale.US,
+                            "\nRomFS: %.2f / %.2f GB\nRemaining RomFS: %.2f GB; free: %.2f GB\nAdditional space is needed for modules and shaders.",
+                            bytes[0] / 1e9, bytes[1] / 1e9,
+                            Math.max(0L, bytes[1] - bytes[0]) / 1e9, data.getUsableSpace() / 1e9) : "";
+                    status.setText("Extracting and checking game data (" + (int) (100 * share) + "%)..." + sizes);
                 } else if (phase == 2) {
                     status.setText(
                         "Scanning game modules (" +

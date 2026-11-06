@@ -20,6 +20,9 @@ final class Importer {
     );
 
     static native int[] progress();
+    static native void reset();
+    static native void cancel();
+    static native long[] bytes();
 
     static native String error();
 

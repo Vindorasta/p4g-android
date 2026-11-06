@@ -42,6 +42,27 @@ final class CustomDrivers {
         return new File(context.getFilesDir(), "gpu_driver");
     }
 
+    static String lastRun(Context context) {
+        return readStatus(context, "last-run.txt");
+    }
+
+    private static String readStatus(Context context, String name) {
+        File file = new File(directory(context), name);
+        try {
+            if (!file.isFile() || file.length() > 1024) return "";
+            return new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8).trim();
+        } catch (IOException e) { return ""; }
+    }
+
+    static boolean interrupted(Context context) {
+        String pending = readStatus(context, "pending.txt");
+        return !pending.isEmpty() && pending.equals(active(context));
+    }
+
+    static void acknowledge(Context context) throws IOException {
+        Files.deleteIfExists(new File(directory(context), "pending.txt").toPath());
+    }
+
     static synchronized String active(Context context) {
         String id = readSelection(context);
         return !id.isEmpty() && new File(directory(context), id).isFile() ? id : "";
