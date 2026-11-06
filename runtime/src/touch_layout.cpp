@@ -133,14 +133,29 @@ const std::vector<TouchButton>& buttons() {
         // Keep NX_TOUCH_LAYOUT keys tied to their original positions, so existing
         // custom layouts retain their geometry. kP5R starts with A, B, X, Y.
         constexpr size_t xbox_face[] = {1, 0, 3, 2};
+        // P4G editor visibility is resolved once, before either drawing or hit testing. Keep legacy position keys.
+        const char* hidden_env = xbox ? std::getenv("NX_TOUCH_HIDDEN") : nullptr;
+        const std::string hidden = hidden_env ? hidden_env : "";
         for (size_t k = 0; k < l->count; k++) {
-            out.push_back(l->buttons[k].b);
-            layout_entry(l->buttons[k].name, out[k].x, out[k].y, out[k].r);
+            bool hide = false;
+            for (size_t start = 0; start < hidden.size();) {
+                size_t end = hidden.find(',', start);
+                if (end == std::string::npos) end = hidden.size();
+                const size_t first = hidden.find_first_not_of(" \t", start);
+                const size_t last = end > start ? hidden.find_last_not_of(" \t", end - 1) : std::string::npos;
+                if (first != std::string::npos && first < end && last != std::string::npos && last >= first &&
+                    hidden.compare(first, last - first + 1, l->buttons[k].name) == 0) hide = true;
+                start = end + 1;
+            }
+            if (hide) continue;
+            TouchButton b = l->buttons[k].b;
+            layout_entry(l->buttons[k].name, b.x, b.y, b.r);
             if (xbox && k < std::size(xbox_face)) {
                 const TouchButton& face = kP5R[xbox_face[k]].b;
-                out[k].button = face.button;
-                out[k].label = face.label;
+                b.button = face.button;
+                b.label = face.label;
             }
+            out.push_back(b);
         }
         float scale = float(std::clamp(env_int("NX_TOUCH_SIZE", 100), 50, 160)) / 100.0f;
         for (auto& b : out) b.r *= scale;

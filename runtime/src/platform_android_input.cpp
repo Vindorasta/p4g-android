@@ -459,7 +459,7 @@ int32_t on_input(android_app* app, AInputEvent* e) {
         g_gamepad = false;
         size_t drawn = 0;
         touch_buttons(drawn);
-        if (drawn) {  // a drawn layout (touch_layout.cpp): its buttons first, the rest of the left half is the stick
+        if (drawn || p4g_input()) {  // P4G keeps its stick/camera regions even when every button is hidden
             uint64_t b = touch_hit(x / g_w, y / g_h, g_w / g_h);
             bool left = !b && touch_stick_side(x / g_w);
             Stick stick = b ? kNoStick : left ? kLeftStick : touch_right_stick() ? kRightStick : kNoStick;
@@ -593,7 +593,7 @@ void trace_gamepad_left(const PadState& p, uint64_t frame) {
 size_t touch_overlay(OverlayShape* out, size_t max) {
     size_t n = 0, k = 0;
     const TouchButton* b = touch_buttons(n);
-    if (!n) return 0;
+    if (!n && !p4g_input()) return 0;  // P4G may hide every button while keeping the analog ring
     std::lock_guard lk(g_in);
     if (g_gamepad || !touch_enabled()) return 0;
     // Dimmed to a third while nobody touches the screen (cutscenes, videos), back at once on the next touch.
