@@ -204,10 +204,10 @@ public class Launcher extends Activity {
                 new String[] {"360p", "480p", "720p", "1080p"},
                 new String[] {"360p", "480p", "720p", "1080p"},
                 new String[] {"360p", "480p", "720p", "1080p"}, 2));
-        options.add(new Option("NX_STRETCH", "Pantalla completa (estirar)", "Fullscreen (stretch)",
-                new String[] {"0", "1"},
-                new String[] {"Desactivada", "Activada"},
-                new String[] {"Off", "On"}, 0));
+        options.add(new Option("NX_STRETCH", "Formato de pantalla", "Screen format",
+                new String[] {"0", "16:10", "1"},
+                new String[] {"16:9", "16:10", "Estirar"},
+                new String[] {"16:9", "16:10", "Stretch"}, 0));
         options.add(new Option("NX_FPS_CAP", "Límite de FPS", "FPS limit", new String[] {"30", "60"},
                 new String[] {"30 FPS", "60 FPS"}, new String[] {"30 FPS", "60 FPS"}, 0));
         options.add(new Option("NX_SHOW_FPS", "Contador de FPS", "FPS counter", new String[] {"0", "1"},

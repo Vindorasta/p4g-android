@@ -2,7 +2,7 @@
 // image by a render pass instead of vkCmdBlitImage.
 // - Rotated by the swapchain's preTransform: phones scan out portrait, and a pre-rotated image goes to the display
 //   controller as is (the compositor rotates otherwise, on the GPU whenever system UI is on top).
-// - Fit with bars: a 16:9 picture on a 19.5:9 screen keeps its shape.
+// - Selectable picture format: 16:9 fit, 16:10 fit, or full-window stretch.
 // - Alpha 1: an Android surface may take the image's alpha as transparency (compositeAlpha INHERIT), and the game's
 //   final image has no meaningful alpha.
 // On by default on Android. NX_PRESENT_PASS=1 turns it on elsewhere (checking it on the Mac), =0 off (the blit).
@@ -439,12 +439,16 @@ bool present_pass_record(VkCommandBuffer cb, GpuImage& src, const int32_t* crop,
     float tw = float(sideways ? g.extent.height : g.extent.width), th = float(sideways ? g.extent.width : g.extent.height);
     float bw = 1.0f, bh = 1.0f;
     const char* stretch_env = std::getenv("NX_STRETCH");
-    bool stretch = stretch_env && (stretch_env[0] == '1' || std::strcmp(stretch_env, "true") == 0);
+    bool stretch = stretch_env &&
+                   (std::strcmp(stretch_env, "1") == 0 || std::strcmp(stretch_env, "true") == 0);
     if (stretch) {
         p.box[0] = 0.0f, p.box[1] = 0.0f, p.box[2] = 1.0f, p.box[3] = 1.0f;
     } else {
-        float scale = std::min(tw / cw, th / ch);
-        bw = cw * scale / tw, bh = ch * scale / th;
+        const bool format_16_10 = stretch_env && std::strcmp(stretch_env, "16:10") == 0;
+        const float picture_w = format_16_10 ? 16.0f : cw;
+        const float picture_h = format_16_10 ? 10.0f : ch;
+        float scale = std::min(tw / picture_w, th / picture_h);
+        bw = picture_w * scale / tw, bh = picture_h * scale / th;
         p.box[0] = (1 - bw) / 2, p.box[1] = (1 - bh) / 2, p.box[2] = bw, p.box[3] = bh;
     }
     // The touch controls (platform_android_input.cpp), in upright uv; none elsewhere.
