@@ -2,6 +2,7 @@ package io.github.p4grecomp;
 
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Build;
 import android.os.SystemClock;
 import android.system.Os;
 import android.system.OsConstants;
@@ -10,6 +11,8 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.PorterDuff;
+import android.graphics.Rect;
+import android.util.DisplayMetrics;
 import android.view.View;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -32,6 +35,7 @@ final class PerformanceOverlay {
     private float baseTextSize;
     private volatile boolean surfaceReady;
     private volatile int generation;
+    private int fixedBufferWidth, fixedBufferHeight;
     private long lastTime, lastCpu, lastFrames;
     private final int cpuCores = Math.max(1, Runtime.getRuntime().availableProcessors());
     private String gpuCounter;
@@ -51,20 +55,67 @@ final class PerformanceOverlay {
         panel.setZOrderOnTop(true);
         panel.getHolder().setFormat(PixelFormat.TRANSLUCENT);
         panel.getHolder().addCallback(new SurfaceHolder.Callback() {
-            @Override public void surfaceCreated(SurfaceHolder holder) { surfaceReady = true; }
-            @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) { }
+            @Override public void surfaceCreated(SurfaceHolder holder) {
+                surfaceReady = true;
+                requestPhysicalBuffer();
+            }
+            @Override public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+                surfaceReady = true;
+                requestPhysicalBuffer();
+            }
             @Override public void surfaceDestroyed(SurfaceHolder holder) { surfaceReady = false; }
         });
+        panel.addOnLayoutChangeListener((view, left, top, right, bottom,
+                oldLeft, oldTop, oldRight, oldBottom) -> requestPhysicalBuffer());
         panel.setClickable(false);
         panel.setFocusable(false);
         panel.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         paint.setTypeface(android.graphics.Typeface.MONOSPACE);
-        baseTextSize = P4gTheme.dp(activity, 12);
+        baseTextSize = P4gTheme.dp(activity, 10);
         paint.setTextSize(baseTextSize);
         paint.setColor(P4gTheme.YELLOW);
         background.setColor(0xB3141414);
         activity.addContentView(panel, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        requestPhysicalBuffer();
+    }
+
+    /** Keeps this compositor layer at window pixels even when Vulkan selects a 360p/480p/720p buffer. */
+    private void requestPhysicalBuffer() {
+        if (panel == null) return;
+        panel.post(() -> {
+            if (panel == null) return;
+            int width = 0, height = 0;
+            if (Build.VERSION.SDK_INT >= 30) {
+                Rect bounds = Api30.windowBounds(activity);
+                width = bounds.width();
+                height = bounds.height();
+            } else {
+                DisplayMetrics metrics = new DisplayMetrics();
+                activity.getWindowManager().getDefaultDisplay().getRealMetrics(metrics);
+                width = metrics.widthPixels;
+                height = metrics.heightPixels;
+            }
+            // A configuration callback may briefly report the previous orientation.
+            int viewWidth = panel.getWidth(), viewHeight = panel.getHeight();
+            if (viewWidth > 0 && viewHeight > 0 && (viewWidth > viewHeight) != (width > height)) {
+                int swap = width;
+                width = height;
+                height = swap;
+            }
+            if (width <= 0 || height <= 0 ||
+                    (width == fixedBufferWidth && height == fixedBufferHeight)) return;
+            fixedBufferWidth = width;
+            fixedBufferHeight = height;
+            panel.getHolder().setFixedSize(width, height);
+        });
+    }
+
+    /** Keeps API 30 references out of verification on older Android releases. */
+    private static final class Api30 {
+        static Rect windowBounds(GameActivity activity) {
+            return activity.getWindowManager().getCurrentWindowMetrics().getBounds();
+        }
     }
 
     void start() {
@@ -110,14 +161,14 @@ final class PerformanceOverlay {
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
             String[] lines = text.split("\\n");
             float shortSide = Math.max(1.0f, Math.min(canvas.getWidth(), canvas.getHeight()));
-            float edge = Math.max(2.0f, shortSide * 0.015f);
-            float pad = Math.min(P4gTheme.dp(activity, 7), shortSide * 0.02f);
-            // The SurfaceView buffer can follow a low output size on some devices. Scale the
-            // panel from the actual canvas and fit it inside both axes instead of assuming 720p.
-            paint.setTextSize(Math.min(baseTextSize, Math.max(9.0f, shortSide * 0.04f)));
+            float edge = Math.min(P4gTheme.dp(activity, 6), shortSide * 0.02f);
+            float pad = Math.min(P4gTheme.dp(activity, 5), shortSide * 0.018f);
+            // requestPhysicalBuffer keeps this canvas in window pixels. The fit below remains a
+            // safety net for unusual multi-window bounds and long localized metric strings.
+            paint.setTextSize(baseTextSize);
             float width = 0;
             for (String line : lines) width = Math.max(width, paint.measureText(line));
-            float lineHeight = paint.getTextSize() * 1.25f;
+            float lineHeight = paint.getTextSize() * 1.20f;
             float widthScale = (canvas.getWidth() - edge * 2.0f - pad * 2.0f) / Math.max(1.0f, width);
             float heightScale = (canvas.getHeight() - edge * 2.0f - pad * 1.4f) /
                     Math.max(1.0f, lines.length * lineHeight);
@@ -126,13 +177,12 @@ final class PerformanceOverlay {
                 paint.setTextSize(Math.max(6.0f, paint.getTextSize() * fit));
                 width = 0;
                 for (String line : lines) width = Math.max(width, paint.measureText(line));
-                lineHeight = paint.getTextSize() * 1.25f;
+                lineHeight = paint.getTextSize() * 1.20f;
             }
             float panelWidth = Math.min(canvas.getWidth() - edge * 2.0f, width + pad * 2.0f);
             float panelHeight = Math.min(canvas.getHeight() - edge * 2.0f,
                     lines.length * lineHeight + pad * 1.4f);
-            float left = Math.max(edge, Math.min((canvas.getWidth() - panelWidth) * 0.5f,
-                    canvas.getWidth() - edge - panelWidth));
+            float left = edge;
             float top = edge;
             canvas.drawRoundRect(left, top, left + panelWidth, top + panelHeight, pad, pad, background);
             float y = top + pad + paint.getTextSize();
