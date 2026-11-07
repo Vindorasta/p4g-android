@@ -17,6 +17,24 @@ const game::Info game::kInfo = {
 
 void game::after_init() {
 
+#if defined(__ANDROID__)
+    // P4G experimental native profile. Keep every switch user-overridable from config.txt:
+    // platform_android imports that file into the environment before the guest starts.
+    // The profile deliberately leaves NX_ASYNC_PIPELINES off; skipping a draw while a
+    // pipeline compiles hides a hitch by showing an incomplete frame, which is not an
+    // acceptable default for an official-style port.
+    auto default_setting = [](const char* name, const char* value) {
+        if (!std::getenv(name)) setenv(name, value, 0);
+    };
+    default_setting("NX_PIPE_THREADS", "3");
+    default_setting("NX_PIPE_PREWARM", "1");
+    default_setting("NX_PIPE_PREWARM_BUDGET_US", "2000");
+    default_setting("NX_PIPE_PREWARM_INFLIGHT", "64");
+    default_setting("NX_PIPE_PREWARM_SCAN", "128");
+    default_setting("NX_AFFINITY", "2");
+    log("p4g: experimental Android profile: pipeline prewarm 2 ms/submit, 64 in flight, 3 workers");
+#endif
+
     log("p4g: runtime initialized");
     log("p4g: beginning game-specific initialization");
 }

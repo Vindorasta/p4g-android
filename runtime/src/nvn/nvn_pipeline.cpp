@@ -646,10 +646,27 @@ void pipeline_warm_step() {
         if (remaining) log("nvn/vk: prewarm: %zu pipelines from earlier sessions", remaining);
     }
     if (!remaining) return;
+    // Defaults preserve the established behaviour. Game profiles and config.txt may raise
+    // the bounded work during loading-heavy titles without enabling NX_ASYNC_PIPELINES
+    // (which intentionally drops draws while a new pipeline is compiling).
+    static const uint64_t budget_ns = [] {
+        const char* e = std::getenv("NX_PIPE_PREWARM_BUDGET_US");
+        const long us = e ? std::atol(e) : 1000;
+        return uint64_t(std::clamp(us, 100L, 10000L)) * 1000;
+    }();
+    static const size_t inflight_limit = [] {
+        const char* e = std::getenv("NX_PIPE_PREWARM_INFLIGHT");
+        const long n = e ? std::atol(e) : 32;
+        return size_t(std::clamp(n, 1L, 256L));
+    }();
+    static const size_t scan_limit = [] {
+        const char* e = std::getenv("NX_PIPE_PREWARM_SCAN");
+        const long n = e ? std::atol(e) : 64;
+        return size_t(std::clamp(n, 1L, 1024L));
+    }();
     const uint64_t t0 = plat::monotonic_ns();
-    constexpr uint64_t kBudgetNs = 1000000;  // replay-thread time per submit spent preparing builds
-    for (size_t scanned = 0; scanned < std::min<size_t>(recs.size(), 64) && g_prewarm_inflight < 32; scanned++) {  // 64 lookups per submit: the shaders of other courses never load
-        if (plat::monotonic_ns() - t0 > kBudgetNs) break;
+    for (size_t scanned = 0; scanned < std::min(recs.size(), scan_limit) && g_prewarm_inflight < inflight_limit; scanned++) {
+        if (plat::monotonic_ns() - t0 > budget_ns) break;
         size_t i = cursor++ % recs.size();
         if (done[i]) continue;
         WarmRec& r = recs[i];
