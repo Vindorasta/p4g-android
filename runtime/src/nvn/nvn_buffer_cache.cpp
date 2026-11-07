@@ -191,10 +191,10 @@ void cache_begin_submit() {
 
 bool cache_upload(const uint8_t* p, uint64_t size, uint64_t padded, uint64_t align, Upload& out) {
     if (!on() || !p || !size || padded > kMaxCopy || align > kAlign) return false;
-    const uint64_t t0 = plat::monotonic_ns();
+    const uint64_t t0 = perf_stats_on() ? plat::monotonic_ns() : 0;
     uint64_t h = hash_memory(p, size);  // whole 8-byte words: the last size % 8 bytes go in here
     for (uint64_t k = size & ~7ull; k < size; k++) h = (h ^ p[k]) * 0x100000001B3ull;
-    g_stats_cache.hash_ns += plat::monotonic_ns() - t0;
+    if (t0) g_stats_cache.hash_ns += plat::monotonic_ns() - t0;
     const uint64_t serial = frame_recording_serial();
     auto it = g_entries.find(p);
     if (it != g_entries.end()) {

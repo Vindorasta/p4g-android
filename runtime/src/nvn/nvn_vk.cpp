@@ -594,7 +594,8 @@ struct Timing {
 } g_timing;
 
 void end_and_wait(VkSemaphore wait, VkSemaphore signal) {
-    uint64_t t0 = plat::monotonic_ns();
+    const bool stats = perf_stats_on();
+    const uint64_t t0 = stats ? plat::monotonic_ns() : 0;
     gpu_busy_part_end(0, 0, g_cb);
     p_vkEndCommandBuffer(g_cb);
     VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
@@ -612,7 +613,7 @@ void end_and_wait(VkSemaphore wait, VkSemaphore signal) {
     }
     p_vkResetFences(g_device, 1, &g_fence);
     bool queued = check(p_vkQueueSubmit(g_queue, 1, &si, g_fence), "vkQueueSubmit");
-    uint64_t t1 = plat::monotonic_ns();
+    const uint64_t t1 = stats ? plat::monotonic_ns() : 0;
     // 2 s at most: a frame's work takes milliseconds; longer is a shader that does not end.
     if (queued) {
         VkResult w = p_vkWaitForFences(g_device, 1, &g_fence, VK_TRUE, 2'000'000'000ull);
@@ -620,22 +621,25 @@ void end_and_wait(VkSemaphore wait, VkSemaphore signal) {
         check(w, "vkWaitForFences");
         gpu_busy_retired(0, 1, g_cb_replay);
     }
-    frame_times().encode_ns += t1 - t0, frame_times().fence_ns += plat::monotonic_ns() - t1;
+    if (stats)
+        frame_times().encode_ns += t1 - t0, frame_times().fence_ns += plat::monotonic_ns() - t1;
 }
 
 void log_timing(uint64_t frames) {
-    auto ms = [&](uint64_t ns) { return double(ns) / 1e6 / double(frames); };
-    static uint64_t last = 0;  // wall clock: the real frame rate
-    uint64_t now = plat::monotonic_ns();
-    double fps = last ? double(frames) * 1e9 / double(now - last) : 0.0;
-    last = now;
-    const Timing& t = g_timing;
-    uint64_t known = t.replay_ns + t.encode_ns + t.fence_ns;
-    log("nvn/vk: per frame over %llu: %.1f fps, %.1f submits, replay %.2f ms, submit (encode) %.2f ms, fence wait "
-        "%.2f ms, other %.2f ms, present %.2f ms, upload %.2f MB",
-        (unsigned long long)frames, fps, double(t.submits) / double(frames), ms(t.replay_ns), ms(t.encode_ns),
-        ms(t.fence_ns), ms(t.submit_ns > known ? t.submit_ns - known : 0), ms(t.present_ns),
-        double(t.upload_bytes) / 1e6 / double(frames));
+    if (perf_stats_on()) {
+        auto ms = [&](uint64_t ns) { return double(ns) / 1e6 / double(frames); };
+        static uint64_t last = 0;  // wall clock: the real frame rate
+        uint64_t now = plat::monotonic_ns();
+        double fps = last ? double(frames) * 1e9 / double(now - last) : 0.0;
+        last = now;
+        const Timing& t = g_timing;
+        uint64_t known = t.replay_ns + t.encode_ns + t.fence_ns;
+        log("nvn/vk: per frame over %llu: %.1f fps, %.1f submits, replay %.2f ms, submit (encode) %.2f ms, fence wait "
+            "%.2f ms, other %.2f ms, present %.2f ms, upload %.2f MB",
+            (unsigned long long)frames, fps, double(t.submits) / double(frames), ms(t.replay_ns), ms(t.encode_ns),
+            ms(t.fence_ns), ms(t.submit_ns > known ? t.submit_ns - known : 0), ms(t.present_ns),
+            double(t.upload_bytes) / 1e6 / double(frames));
+    }
     frame_log(frames);
     gpu_probe_log();
     write_back_log(frames);
@@ -645,8 +649,10 @@ void log_timing(uint64_t frames) {
 
 // gpu_present's time, whatever way it returns.
 struct PresentTimer {
-    uint64_t t0 = plat::monotonic_ns();
-    ~PresentTimer() { g_timing.present_ns += plat::monotonic_ns() - t0; }
+    uint64_t t0 = perf_stats_on() ? plat::monotonic_ns() : 0;
+    ~PresentTimer() {
+        if (t0) g_timing.present_ns += plat::monotonic_ns() - t0;
+    }
 };
 
 }  // namespace
@@ -661,8 +667,9 @@ const DeferredValues* current_deferred() { return g_deferred.get(); }
 void gpu_submit(const std::vector<std::shared_ptr<CmdList>>& lists, std::shared_ptr<const DeferredValues> deferred) {
     g_deferred = std::move(deferred);
     std::lock_guard lk(g_gpu);
-    uint64_t t_in = plat::monotonic_ns();
-    const FrameTimes f_in = frame_times();
+    const bool stats = perf_stats_on();
+    const uint64_t t_in = stats ? plat::monotonic_ns() : 0;
+    const FrameTimes f_in = stats ? frame_times() : FrameTimes{};
     uint64_t lists_epoch = 0;
     for (auto& l : lists) lists_epoch = std::max(lists_epoch, l->epoch);
     ReplayScope replay(lists_epoch);  // the texture mark (#55, #57), then drain_objects (under the GPU lock, #50)
@@ -683,8 +690,8 @@ void gpu_submit(const std::vector<std::shared_ptr<CmdList>>& lists, std::shared_
     // Pipelined: the part up to the last dispatch is queued as soon as it is recorded (nvn_frames.cpp). Not with the
     // profile or the zero-draw queries: they span the submit, which is then waited for whole.
     size_t split_after = gpu_profile_on() || zero_draws_on() ? SIZE_MAX : frame_plan_split(lists);
-    uint64_t t0 = plat::monotonic_ns();
-    const FrameTimes f0 = frame_times();
+    const uint64_t t0 = stats ? plat::monotonic_ns() : 0;
+    const FrameTimes f0 = stats ? frame_times() : FrameTimes{};
     Targets st;
     for (size_t k = 0; k < lists.size(); k++) {
         replay_list(g_cb, st, *lists[k], 0);
@@ -693,10 +700,12 @@ void gpu_submit(const std::vector<std::shared_ptr<CmdList>>& lists, std::shared_
     }
     draw_end_rendering(g_cb);
     linear_targets_write_back(g_cb);
-    const FrameTimes f1 = frame_times();  // the first part's submit and ring waits are not replay time
-    g_timing.submits++;
-    g_timing.replay_ns += plat::monotonic_ns() - t0 - (f1.encode_ns - f0.encode_ns) - (f1.fence_ns - f0.fence_ns);
-    g_timing.upload_bytes += async ? frame_upload_used() : g_upload_used;
+    const FrameTimes f1 = stats ? frame_times() : FrameTimes{};  // the first part's submit and ring waits are not replay time
+    if (stats) {
+        g_timing.submits++;
+        g_timing.replay_ns += plat::monotonic_ns() - t0 - (f1.encode_ns - f0.encode_ns) - (f1.fence_ns - f0.fence_ns);
+        g_timing.upload_bytes += async ? frame_upload_used() : g_upload_used;
+    }
     gpu_profile_mark(g_cb, "end");
     if (async)  // the profile, zero-draw queries and snapshots read this submit's results right below: waited for
         frame_submit(VK_NULL_HANDLE, VK_NULL_HANDLE, draw_take_write_backs(),
@@ -706,9 +715,11 @@ void gpu_submit(const std::vector<std::shared_ptr<CmdList>>& lists, std::shared_
     draw_end_submit();  // not waited for: snapshots only (the write-backs went with the submit)
     gpu_profile_collect(), zero_draws_collect();
     debug_dump_requested(draw_take_dump_request());  // reads back in a submit of its own, which it waits for
-    const FrameTimes f2 = frame_times();
-    g_timing.encode_ns += f2.encode_ns - f_in.encode_ns, g_timing.fence_ns += f2.fence_ns - f_in.fence_ns;
-    g_timing.submit_ns += plat::monotonic_ns() - t_in;
+    if (stats) {
+        const FrameTimes f2 = frame_times();
+        g_timing.encode_ns += f2.encode_ns - f_in.encode_ns, g_timing.fence_ns += f2.fence_ns - f_in.fence_ns;
+        g_timing.submit_ns += plat::monotonic_ns() - t_in;
+    }
 }
 
 // Headless: the presented texture is only counted, logged and dumped (no swapchain). Nothing is submitted unless a
@@ -717,7 +728,7 @@ void present_headless(uint64_t texture) {
     GpuImage* src = image_of(texture);  // made here if new, as before (the targets rendered into it share it, #44)
     static uint64_t presents = 0;
     presents++;
-    if (presents % (presents < 300 ? 60 : 300) == 0) draw_log_stats();
+    if (perf_stats_on() && presents % (presents < 300 ? 60 : 300) == 0) draw_log_stats();
     if (presents % 60 == 0) log_timing(60), gpu_profile_log(60);
     if (presents % 300 == 0) zero_draws_log();
     // NX_PRESENT_TEST_ALL=1 (with NX_PRESENT_TEST): the present pass runs for every frame, and its submit is timed.
@@ -819,7 +830,7 @@ void gpu_present(uint64_t texture, const int32_t* crop, uint64_t origin_ns) {
     if (!drawn) transition(g_cb, dst, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     static uint64_t presents = 0;
     presents++;
-    if (presents % (presents < 300 ? 60 : 300) == 0) draw_log_stats();
+    if (perf_stats_on() && presents % (presents < 300 ? 60 : 300) == 0) draw_log_stats();
     if (presents % 60 == 0) log_timing(60), gpu_profile_log(60);
     if (presents % 300 == 0) zero_draws_log();
     frame_sig_flush(presents);

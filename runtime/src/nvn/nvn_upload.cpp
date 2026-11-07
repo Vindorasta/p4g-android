@@ -64,12 +64,13 @@ bool copies_fit(const Texture& t, const VkBufferImageCopy* r, uint32_t n, uint64
 }
 
 // ASTC on a GPU without it (nvn_format.cpp): the untiled blocks of every level become RGBA8 texels, and the levels
-// are re-laid out for them (each level's layers back to back, 16-byte aligned). Logged every 200 textures: count,
-// bytes and CPU time, the cost of the decoder at load.
+// are re-laid out for them (each level's layers back to back, 16-byte aligned). NX_TRACE_PERF=1 logs every 200
+// textures: count, bytes and CPU time, the cost of the decoder at load.
 void decode_astc(uint32_t format, std::vector<uint8_t>& linear, std::vector<LinearLevel>& levels, uint32_t layers,
                  uint32_t bw, uint32_t bh) {
     static uint64_t textures = 0, bytes = 0, ns = 0, invalid = 0;
-    const uint64_t t0 = plat::monotonic_ns();
+    const bool stats = perf_stats_on();
+    const uint64_t t0 = stats ? plat::monotonic_ns() : 0;
     const bool srgb = format >= 0x87;
     std::vector<LinearLevel> out = levels;
     uint64_t at = 0;
@@ -86,12 +87,14 @@ void decode_astc(uint32_t format, std::vector<uint8_t>& linear, std::vector<Line
                                          bw, bh, srgb, rgba.data() + out[k].offset);
     linear.swap(rgba);
     levels.swap(out);
-    const uint64_t spent = plat::monotonic_ns() - t0;
-    note_astc_decoded(spent);  // per timing window (nvn_pipeline_cache.cpp)
-    bytes += at, ns += spent;
-    if (++textures % 200 == 1)
-        log("nvn/vk: ASTC decoded on the CPU: %llu textures, %.1f MB, %.0f ms, %llu invalid blocks",
-            (unsigned long long)textures, double(bytes) / 1e6, double(ns) / 1e6, (unsigned long long)invalid);
+    if (stats) {
+        const uint64_t spent = plat::monotonic_ns() - t0;
+        note_astc_decoded(spent);  // per timing window (nvn_pipeline_cache.cpp)
+        bytes += at, ns += spent;
+        if (++textures % 200 == 1)
+            log("nvn/vk: ASTC decoded on the CPU: %llu textures, %.1f MB, %.0f ms, %llu invalid blocks",
+                (unsigned long long)textures, double(bytes) / 1e6, double(ns) / 1e6, (unsigned long long)invalid);
+    }
 }
 
 // Whether a 1 MB+ upload gets a staging buffer of its own (PHASE4.md U1). In steady state (a course frame stages ~30

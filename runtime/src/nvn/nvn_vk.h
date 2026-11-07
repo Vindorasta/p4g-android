@@ -2,6 +2,7 @@
 // resources, draws). Everything here runs under the GPU lock taken by gpu_submit / gpu_present.
 #pragma once
 
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -9,6 +10,16 @@
 #include "vk_gen.h"
 
 namespace nx::nvn {
+
+// Detailed periodic renderer statistics are useful for profiling but format and synchronously flush many log lines.
+// Keep startup, cache, driver, warning and error messages independent from this switch.
+inline bool perf_stats_on() {
+    static const bool on = [] {
+        const char* e = std::getenv("NX_TRACE_PERF");
+        return e && e[0] == '1';
+    }();
+    return on;
+}
 
 struct GpuImage {
     // NX_TEX_AUDIT (nvn_pipeline.cpp tex_audit): a hash of the guest memory its last upload read, and when it was

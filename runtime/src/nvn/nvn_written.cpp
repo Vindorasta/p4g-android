@@ -318,7 +318,7 @@ namespace nx::nvn {
 void write_back_log(uint64_t frames) {
     const uint64_t n = g_wb_count.exchange(0), bytes = g_wb_bytes.exchange(0), changed = g_wb_changed.exchange(0),
                    ns = g_wb_ns.exchange(0);
-    if (n && frames)
+    if (perf_stats_on() && n && frames)
         log("nvn: write-backs per frame: %.0f, %.2f MB compared, %.0f%% of the words changed, %.2f ms", double(n) / double(frames),
             double(bytes) / 1e6 / double(frames), bytes ? 800.0 * double(changed) / double(bytes) : 0.0,
             double(ns) / 1e6 / double(frames));
@@ -326,11 +326,12 @@ void write_back_log(uint64_t frames) {
 
 void apply_write_back(const WriteBack& w) {
     static const bool whole = std::getenv("NX_WRITE_BACK_WHOLE") != nullptr;
-    const uint64_t t0 = plat::monotonic_ns();
-    g_wb_count++, g_wb_bytes += w.size;
+    const bool stats = perf_stats_on();
+    const uint64_t t0 = stats ? plat::monotonic_ns() : 0;
+    if (stats) g_wb_count++, g_wb_bytes += w.size;
     if (whole || !w.before || w.before->size() < w.size) {
         std::memcpy(w.to, w.from, w.size);
-        g_wb_ns += plat::monotonic_ns() - t0;
+        if (stats) g_wb_ns += plat::monotonic_ns() - t0;
         return;
     }
     const uint8_t* was = w.before->data();
@@ -354,8 +355,7 @@ void apply_write_back(const WriteBack& w) {
     }
     for (; k < w.size; k++)
         if (from[k] != was[k]) w.to[k] = from[k];
-    g_wb_changed += changed;
-    g_wb_ns += plat::monotonic_ns() - t0;
+    if (stats) g_wb_changed += changed, g_wb_ns += plat::monotonic_ns() - t0;
 }
 
 }  // namespace nx::nvn

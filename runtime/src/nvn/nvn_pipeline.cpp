@@ -95,7 +95,7 @@ VkShaderModule module_of(const ShaderInfo* s, const uint8_t* kinds = nullptr, ui
     std::string k = kinds && !off ? std::string(reinterpret_cast<const char*>(kinds), 16) : std::string(16, '\0');
     auto& m = cache[{s, k, unwritten}];
     if (!m) {
-        const uint64_t module_t0 = plat::monotonic_ns();
+        const uint64_t module_t0 = perf_stats_on() ? plat::monotonic_ns() : 0;
         bool is_patched = false;
         const uint8_t* int_kinds = k != std::string(16, '\0') ? reinterpret_cast<const uint8_t*>(k.data()) : nullptr;
         std::vector<uint32_t> code = patched_spirv(s, int_kinds, unwritten, &is_patched);
@@ -127,7 +127,7 @@ VkShaderModule module_of(const ShaderInfo* s, const uint8_t* kinds = nullptr, ui
         ci.codeSize = code.size() * 4;
         ci.pCode = code.data();
         if (p_vkCreateShaderModule(vk_device(), &ci, nullptr, &m) != VK_SUCCESS) log("nvn/vk: shader %s rejected", s->hash.c_str());
-        note_module_created(plat::monotonic_ns() - module_t0);
+        if (module_t0) note_module_created(plat::monotonic_ns() - module_t0);
         static int logged = 0;
         if (is_patched && logged++ < 20) log("nvn/vk: shader %s: integer vertex inputs", s->hash.c_str());
     }
@@ -148,9 +148,11 @@ VkDescriptorSetLayout set_layout(const std::vector<VkDescriptorSetLayoutBinding>
         ci.bindingCount = uint32_t(bindings.size());
         ci.pBindings = bindings.data();
         p_vkCreateDescriptorSetLayout(vk_device(), &ci, nullptr, &l);
-        auto& c = layout_counts()[l];  // for the descriptor pool's peak use (nvn_frames.cpp)
-        for (const auto& b : bindings)
-            if (b.descriptorType < 16) c[b.descriptorType] += b.descriptorCount;
+        if (perf_stats_on()) {
+            auto& c = layout_counts()[l];  // for the descriptor pool's peak use (nvn_frames.cpp)
+            for (const auto& b : bindings)
+                if (b.descriptorType < 16) c[b.descriptorType] += b.descriptorCount;
+        }
     }
     return l;
 }
@@ -359,9 +361,9 @@ std::unique_ptr<PipeBuild> prepare_graphics_pipeline(const PipelineKey& key, con
 thread_local bool t_worker = false;
 VkPipeline compile(PipeBuild& b) {
     VkPipeline p = VK_NULL_HANDLE;
-    const uint64_t t0 = plat::monotonic_ns();
+    const uint64_t t0 = perf_stats_on() ? plat::monotonic_ns() : 0;
     VkResult made = p_vkCreateGraphicsPipelines(vk_device(), b.cache, 1, &b.ci, nullptr, &p);
-    note_pipeline_created(plat::monotonic_ns() - t0, t_worker);
+    if (t0) note_pipeline_created(plat::monotonic_ns() - t0, t_worker);
     if (made != VK_SUCCESS) {
         log("nvn/vk: pipeline for %s + %s failed", b.vs_hash.c_str(), b.fs_hash.c_str());
         p = VK_NULL_HANDLE;
@@ -557,9 +559,9 @@ VkPipeline pipeline_for(const PipelineKey& canon, const ProgramLayout& layout, b
         std::shared_ptr<PipeTask> t = it->second;
         if (t->state.load() != 2) {
             if (async_skip()) return *pending = true, VK_NULL_HANDLE;
-            const uint64_t t0 = plat::monotonic_ns();
+            const uint64_t t0 = perf_stats_on() ? plat::monotonic_ns() : 0;
             t->wait();
-            note_pipeline_waited(plat::monotonic_ns() - t0);
+            if (t0) note_pipeline_waited(plat::monotonic_ns() - t0);
         }
         g_canon.emplace(ck, t->pipeline);
         g_inflight.erase(ck);

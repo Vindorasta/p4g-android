@@ -85,11 +85,18 @@ void pipeline_cache_save() {
 }
 
 void note_pipeline_created(uint64_t ns, bool worker) {
+    if (!perf_stats_on()) return;
     (worker ? g_worker_pipelines : g_pipelines)++, (worker ? g_worker_ns : g_pipeline_ns) += ns;
 }
-void note_pipeline_waited(uint64_t ns) { g_waited++, g_waited_ns += ns; }
-void note_pipeline_skipped() { g_skipped++; }
-void note_pipeline_prewarmed() { g_prewarmed++; }
+void note_pipeline_waited(uint64_t ns) {
+    if (perf_stats_on()) g_waited++, g_waited_ns += ns;
+}
+void note_pipeline_skipped() {
+    if (perf_stats_on()) g_skipped++;
+}
+void note_pipeline_prewarmed() {
+    if (perf_stats_on()) g_prewarmed++;
+}
 
 // ---- the keys of earlier sessions (<cache path minus .bin>.keys) ---------------------------------------------------
 // Header {magic, sizeof(WarmRec)} then WarmRec records. A file of another layout is ignored (and rewritten).
@@ -146,21 +153,28 @@ static void warm_save() {
         g_new_recs.clear();
     }
 }
-void note_pipeline_alias() { g_alias++; }
-void note_module_created(uint64_t ns) { g_modules++, g_module_ns += ns; }
-void note_astc_decoded(uint64_t ns) { g_astc++, g_astc_ns += ns; }
+void note_pipeline_alias() {
+    if (perf_stats_on()) g_alias++;
+}
+void note_module_created(uint64_t ns) {
+    if (perf_stats_on()) g_modules++, g_module_ns += ns;
+}
+void note_astc_decoded(uint64_t ns) {
+    if (perf_stats_on()) g_astc++, g_astc_ns += ns;
+}
 
 // One line per timing window (nvn_vk.cpp log_timing): what the replay created, and the time it took.
 void creation_log(uint64_t frames) {
-    if (g_pipelines || g_astc)
+    const bool detailed = perf_stats_on();
+    if (detailed && (g_pipelines || g_astc))
         log("nvn/vk: created over %llu frames: %llu pipelines (%.1f ms), %llu ASTC textures decoded (%.1f ms)",
             (unsigned long long)frames, (unsigned long long)g_pipelines.load(), double(g_pipeline_ns.load()) / 1e6,
             (unsigned long long)g_astc, double(g_astc_ns) / 1e6);
-    if (g_alias || g_modules)
+    if (detailed && (g_alias || g_modules))
         log("nvn/vk: over %llu frames: %llu raw keys shared an existing pipeline, %llu shader modules (%.1f ms)",
             (unsigned long long)frames, (unsigned long long)g_alias, (unsigned long long)g_modules, double(g_module_ns) / 1e6);
     g_alias = g_modules = g_module_ns = 0;
-    if (g_prewarmed || g_skipped || g_waited || g_worker_pipelines)
+    if (detailed && (g_prewarmed || g_skipped || g_waited || g_worker_pipelines))
         log("nvn/vk: over %llu frames: %llu pipelines sent to workers, %llu compiled there (%.1f ms), the replay waited for %llu (%.1f ms), %llu draws skipped",
             (unsigned long long)frames, (unsigned long long)g_prewarmed, (unsigned long long)g_worker_pipelines.load(),
             double(g_worker_ns.load()) / 1e6, (unsigned long long)g_waited, double(g_waited_ns) / 1e6,

@@ -164,12 +164,12 @@ uint64_t g_reuse_clock = 0, g_reused = 0;
 
 void wait_fences(const VkFence* fences, uint32_t n) {
     if (!n) return;
-    uint64_t t0 = plat::monotonic_ns();
+    const uint64_t t0 = perf_stats_on() ? plat::monotonic_ns() : 0;
     VkResult r = p_vkWaitForFences(vk_device(), n, fences, VK_TRUE, kFenceTimeout);
     if (r == VK_TIMEOUT) gpu_hung("a submit did not finish in 2 s");
     if (r == VK_ERROR_DEVICE_LOST) gpu_hung("vkWaitForFences");
     if (r != VK_SUCCESS) log("nvn/vk: vkWaitForFences failed (%d)", int(r));
-    g_times.fence_ns += plat::monotonic_ns() - t0;
+    if (t0) g_times.fence_ns += plat::monotonic_ns() - t0;
 }
 
 // Compute results to guest memory: after the fence of the part that holds the submit's dispatches.
@@ -221,7 +221,7 @@ uint32_t queued_fences(const Slot& s, uint32_t upto, VkFence* out);
 
 // The deferred write-backs of the submits up to `serial`, oldest first: their fences waited for, then copied.
 void apply_deferred_through(uint64_t serial, int why) {
-    const uint64_t t0 = plat::monotonic_ns();
+    const uint64_t t0 = perf_stats_on() ? plat::monotonic_ns() : 0;
     for (;;) {
         Slot* s = nullptr;
         for (uint32_t k = 0; k < g_slot_count; k++)
@@ -233,9 +233,9 @@ void apply_deferred_through(uint64_t serial, int why) {
         wait_fences(fences, queued_fences(*s, s->wb_upto, fences));
         apply_write_backs(*s);
         undefer(*s);
-        g_stats.applied[why]++;
+        if (t0) g_stats.applied[why]++;
     }
-    g_stats.applied_ns[why] += plat::monotonic_ns() - t0;
+    if (t0) g_stats.applied_ns[why] += plat::monotonic_ns() - t0;
 }
 
 // Waits for the oldest submit in flight and finishes it: compute results to guest memory (if not there yet), its
@@ -318,7 +318,7 @@ bool begin_part(VkCommandBuffer cb) {
 // Ends `cb` and queues it (Metal encoding happens inside vkQueueSubmit: MoltenVK's synchronous submits). False:
 // nothing was queued, `fence` will not signal.
 bool submit_part(VkCommandBuffer cb, VkFence fence, VkSemaphore wait, VkSemaphore signal) {
-    uint64_t t0 = plat::monotonic_ns();
+    const uint64_t t0 = perf_stats_on() ? plat::monotonic_ns() : 0;
     // The host reads compute results after the fence.
     VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
     mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
@@ -341,7 +341,7 @@ bool submit_part(VkCommandBuffer cb, VkFence fence, VkSemaphore wait, VkSemaphor
     }
     p_vkResetFences(vk_device(), 1, &fence);
     VkResult r = p_vkQueueSubmit(vk_queue(), 1, &si, fence);
-    g_times.encode_ns += plat::monotonic_ns() - t0;
+    if (t0) g_times.encode_ns += plat::monotonic_ns() - t0;
     if (r == VK_ERROR_DEVICE_LOST) gpu_hung("vkQueueSubmit");
     if (r != VK_SUCCESS) log("nvn/vk: vkQueueSubmit failed (%d)", int(r));
     return r == VK_SUCCESS;
@@ -442,6 +442,7 @@ void frame_init(VkCommandPool pool, uint32_t family, VkBuffer ring, uint8_t* rin
         p_vkCreateSemaphore(d, &sci, nullptr, &g_slots[k].acquired);
     }
     g_ring = ring, g_ring_ptr = ring_ptr, g_ring_size = ring_size;
+    log("nvn/vk: periodic performance statistics %s", perf_stats_on() ? "enabled (NX_TRACE_PERF=1)" : "disabled");
 #if defined(__ANDROID__)
     if (std::getenv("NX_SUBMIT_CHUNK_DRAWS")) {
         g_chunk_draws = uint64_t(env_int("NX_SUBMIT_CHUNK_DRAWS"));
@@ -474,7 +475,7 @@ VkCommandBuffer frame_begin(bool replay) {
     g_next = (g_next + 1) % g_slot_count;
     g_begin = g_head;
     s.replay = replay, s.part = s.queued = s.waited = 0, s.split_part = -1, s.ok = true;
-    s.begin_ns = plat::monotonic_ns();
+    s.begin_ns = perf_stats_on() ? plat::monotonic_ns() : 0;
     g_plan_dispatches = g_seen_dispatches = 0;
     g_chunking = false;
     if (!begin_part(s.cbs[0])) {
@@ -508,7 +509,7 @@ VkCommandBuffer frame_split(VkCommandBuffer cb) {
         return frame_cb(cb);
     s->split_part = int(s->part);
     s->binds_at_split = replay::written_bind_count();
-    g_stats.splits++, g_stats.first_ns += plat::monotonic_ns() - s->begin_ns;
+    if (perf_stats_on()) g_stats.splits++, g_stats.first_ns += plat::monotonic_ns() - s->begin_ns;
     VkCommandBuffer next = next_part(*s);
     if (!(s->queued >> s->split_part & 1))
         log("nvn/vk: the part with a split submit's dispatches was not queued: its compute results are lost");
@@ -526,7 +527,7 @@ VkCommandBuffer frame_chunk(VkCommandBuffer cb, uint64_t draws, bool pass_open) 
     // 13.0 cutting only between passes, 11.7 without parts. NX_CHUNK_IN_PASS=0: never inside a pass.
     static const bool in_pass = !std::getenv("NX_CHUNK_IN_PASS") || env_int("NX_CHUNK_IN_PASS") > 0;
     if (since < g_chunk_draws || (pass_open && (!in_pass || since < 2 * g_chunk_draws))) return cb;
-    g_stats.chunks++;
+    if (perf_stats_on()) g_stats.chunks++;
     return next_part(*s);
 }
 
@@ -555,7 +556,7 @@ void frame_submit(VkSemaphore wait, VkSemaphore signal, std::vector<WriteBack> w
     if (!g_current) return;
     Slot& s = *g_current;
     g_current = nullptr;
-    if (pipelined() && s.replay) {
+    if (perf_stats_on() && pipelined() && s.replay) {
         g_stats.submits++;
         if (s.split_part >= 0) g_stats.replay_ns += plat::monotonic_ns() - s.begin_ns;
     }
@@ -621,6 +622,13 @@ uint64_t frame_ring_size() { return async_gpu() ? g_ring_size : 0; }
 
 void frame_log(uint64_t frames) {
     gpu_busy_log(frames);
+    if (!perf_stats_on()) {
+        g_game_waits.exchange(0), g_game_wait_ns.exchange(0);
+        g_peak_sets = 0, std::fill(std::begin(g_peak_descs), std::end(g_peak_descs), 0u);
+        g_staging_count = g_staging_bytes = 0;
+        g_stats = {};
+        return;
+    }
     if (uint64_t waits = g_game_waits.exchange(0))
         log("nvn/vk: the game's waits (syncs, finish, pool invalidate/finalize): %llu blocked, %.2f ms per frame",
             (unsigned long long)waits, double(g_game_wait_ns.exchange(0)) / 1e6 / double(frames));
@@ -679,7 +687,7 @@ VkDescriptorSet frame_descriptor_set(VkDescriptorSetLayout layout) {
     Slot& s = *g_current;
     if (!s.descriptors) s.descriptors = make_descriptor_pool();
     s.descriptors_used = true;
-    {
+    if (perf_stats_on()) {
         uint32_t c[16] = {};
         descriptor_layout_counts(layout, c);
         s.sets_used++;

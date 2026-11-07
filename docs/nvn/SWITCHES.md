@@ -7,6 +7,7 @@ README.
 | Variable | What it does | Code |
 |---|---|---|
 | `NX_LOG=<file>` | runtime log (use `private/wonder/nx.log`) | runtime |
+| `NX_TRACE_PERF=1` | detailed periodic NVN/Vulkan timing, submit, descriptor, draw, pipeline and ASTC statistics; off by default so normal play avoids their measurement and synchronous log writes | nvn_vk.cpp, nvn_frames.cpp, nvn_pipeline_cache.cpp |
 | `NX_DUMP_FRAMES=N` | every Nth presented window texture → `private/wonder/frames/NNNNN.ppm` | nvn_vk.cpp |
 | `NX_DUMP_TEXTURES=<hex>,<hex>` | at the same frames, those `NVNtexture*` are read back too → `NNNNN_<texture>.ppm` (blitted to RGBA8) | nvn_debug.cpp |
 | `NX_DUMP_RAW=1` | with the above: texels as stored → `.raw` (u32 width, height, VkFormat, then 4-byte texels) | nvn_debug.cpp |
@@ -46,8 +47,8 @@ README.
 | `NX_UW_TRACE=<first>:<count>` | with `NX_ULTRAWIDE`: one `uwdraw` line per draw (shaders, count, target, depth/blend, viewport, whether squeezed) | nvn_draw.cpp |
 | `NX_UW_SCAN=<present>` | once: where guest memory holds 16/9, 9/16, 1920x1080, 1280x720 (heap and main's data), with context (`uwscan` lines) | nvn_ultrawide.cpp |
 
-Always on: every 60 presents `nvn/vk: per frame over 60: submits, replay ms (host), GPU wait ms, present wait ms,
-upload MB`.
+With `NX_TRACE_PERF=1`, every 60 presents: `nvn/vk: per frame over 60: submits, replay ms (host), GPU wait ms,
+present wait ms, upload MB`. Startup, cache, driver, warning, crash and error messages remain enabled without it.
 
 Clear colors are logged under `NX_TRACE_DRAWS` too (`clear <texture> (WxH) to r g b a`, each pair once).
 
