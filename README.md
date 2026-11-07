@@ -1,6 +1,6 @@
 # P4G — Persona 4 Golden for Android
 
-**0.4.1 Beta** · ARM64 · Vulkan · English app interface
+**0.4.2 Beta** · ARM64 · Vulkan · English app interface
 
 P4G is an unofficial Android port of the Nintendo Switch version of **Persona 4 Golden**. It uses native ARM64 execution and a compatibility runtime that translates the game's NVN graphics commands to Vulkan.
 
@@ -22,7 +22,7 @@ A full playthrough and broad device compatibility have **not** been verified. Pe
 - Automatic preparation checks when opening the app.
 - Separate preparation screen and main menu.
 - English app interface, including preparation and exit confirmation.
-- Resolution, fullscreen stretching and FPS settings.
+- Resolution, 16:9/16:10/stretch screen formats and FPS settings.
 - On-screen controls with adjustable size, opacity, position and sensitivity.
 - Save import and export, with backups before importing.
 - Translation and CPK mod import.
@@ -146,7 +146,7 @@ Do not attach game dumps or encryption keys to public bug reports.
 2. Configure the repository secrets `P4G_SIGNING_KEY_B64` and `P4G_SIGNING_PASSWORD` required by `.github/workflows/build-p4g.yml`.
 3. Open **Actions → P4G Beta → Run workflow**.
 4. Wait for a successful build.
-5. Download the **P4G-0.4.1-Beta** artifact and extract **P4G.apk**.
+5. Download the **P4G-0.4.2-Beta** artifact and extract **P4G.apk**.
 
 The workflow builds the native runtime and preparation libraries, compiles the Java interface, runs the included checks and packages the APK. A successful build does not replace testing on an Android device.
 
