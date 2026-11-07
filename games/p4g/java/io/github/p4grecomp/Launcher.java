@@ -410,15 +410,9 @@ public class Launcher extends Activity {
             value.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    String[] labels = new String[o.values.length];
-                    for (int i = 0; i < labels.length; i++) labels[i] = t(o.labelsEs[i], o.labelsEn[i]);
-                    new AlertDialog.Builder(Launcher.this).setTitle(t(o.es, o.en))
-                        .setSingleChoiceItems(labels, o.pick, (dialog, which) -> {
-                            o.pick = which;
-                            value.setText(label(o));
-                            save();
-                            dialog.dismiss();
-                        }).setNegativeButton(t("Cancelar", "Cancel"), null).show();
+                    o.pick = (o.pick + 1) % o.values.length;
+                    value.setText(label(o));
+                    save();
                 }
             });
             value.setTag(o);
