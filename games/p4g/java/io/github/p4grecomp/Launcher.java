@@ -216,6 +216,9 @@ public class Launcher extends Activity {
             options.add(new Option("NX_OVERLAY_" + metric, metric, metric, new String[] {"0", "1"},
                     new String[] {"Desactivado", "Activado"}, new String[] {"Off", "On"}, 0));
         }
+        options.add(new Option("NX_TRACE_PERF", "Estadísticas detalladas de rendimiento", "Detailed performance logging",
+                new String[] {"0", "1"}, new String[] {"Desactivado", "Activado"},
+                new String[] {"Off", "On"}, 0));
         options.add(new Option("NX_AFFINITY", "Afinidad de CPU (experimental)", "CPU affinity (experimental)",
                 new String[] {"0", "2", "1"},
                 new String[] {"Sistema Android", "Optimizada (recomendada)", "Separar hilos de cuadro"},
@@ -386,6 +389,14 @@ public class Launcher extends Activity {
                 t("Copias de seguridad y traducciones", "Backups, translations and mod manager"));
         LinearLayout diagnostics = settingsGroup(root, "diagnostics", t("Diagnóstico", "Diagnostics"),
                 t("Exportar registros para reportar errores", "Export logs for bug reports"));
+        TextView diagnosticHelp = new TextView(this);
+        diagnosticHelp.setText(t(
+                "Activa las estadísticas para registrar tiempos de renderizado, esperas y compilación de pipelines. Puede añadir sobrecarga. Los cambios se aplican al iniciar el juego de nuevo. Juega el mismo tramo y exporta los registros; desactiva las estadísticas al terminar. La afinidad no garantiza más FPS.",
+                "Enable detailed logging to record rendering times, waits and pipeline compilation. Logging can add overhead. Changes apply when you start the game again. Play the same section and export logs; turn logging off after testing. CPU affinity does not guarantee higher FPS."));
+        diagnosticHelp.setTextColor(Color.LTGRAY);
+        diagnosticHelp.setTextSize(14);
+        diagnosticHelp.setPadding(0, dp(4), 0, dp(8));
+        diagnostics.addView(diagnosticHelp);
         LinearLayout overlay = settingsGroup(root, "overlay", "Overlay",
                 t("Durante el juego. CPU: 100% = un núcleo; RAM: memoria residente del juego. GPU no disponible en todos los teléfonos.",
                   "In-game stats. CPU: 100% = one core; RAM: game resident memory. GPU usage is unavailable on some phones."));
@@ -416,7 +427,8 @@ public class Launcher extends Activity {
                 }
             });
             value.setTag(o);
-            (o.key.equals("NX_SHOW_FPS") || o.key.startsWith("NX_OVERLAY_") ? overlay :
+            (o.key.equals("NX_TRACE_PERF") ? diagnostics :
+                    o.key.equals("NX_SHOW_FPS") || o.key.startsWith("NX_OVERLAY_") ? overlay :
                     controlOptions ? controls : graphics).addView(row);
         }
         addDriverRow(graphics);
