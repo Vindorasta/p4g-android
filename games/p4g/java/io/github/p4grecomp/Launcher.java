@@ -542,7 +542,8 @@ public class Launcher extends Activity {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(64));
         lp.topMargin = dp(4);
         lp.bottomMargin = dp(16);
-        root.addView(play, 3, lp);
+        // Keep Play after every settings drawer so it remains the final launcher action.
+        root.addView(play, lp);
         play.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) { installShadersAndPlay(); }
