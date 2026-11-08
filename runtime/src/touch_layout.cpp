@@ -218,6 +218,15 @@ bool touch_stick_side(float x) {
     return sx < 0.5f ? x < 0.5f : x >= 0.5f;
 }
 
+bool touch_stick_hit(float x, float y, float aspect) {
+    float sx, sy, sr;
+    touch_stick_rest(sx, sy, sr);
+    // x is a fraction of the screen width while the ring radius is a fraction of its height.
+    const float dx = (x - sx) * aspect;
+    const float dy = y - sy;
+    return dx * dx + dy * dy <= sr * sr;
+}
+
 uint64_t touch_stick_full_button() { return layout() ? layout()->stick_full : 0; }
 
 uint64_t touch_hit(float x, float y, float aspect) {
