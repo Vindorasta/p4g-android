@@ -6,11 +6,9 @@
 // X (action) around it; ZR (roll), R, L, + and - along the top. The left half is the stick (platform_android_input.cpp):
 // it appears where the thumb lands, and pushed nearly all the way it also holds Y, so running needs no second thumb.
 //
-// Persona 5 Royal, landscape: the four face buttons in the Switch diamond at the bottom right (A confirm/talk, B back,
-// X menu, Y), L / ZL and R / ZR stacked in the top corners, - and + at the top centre, the d-pad on the left above
-// the stick, with a gap (the d-pad's down arrow touched the stick's ring). The left half is the stick; the rest of
-// the right half drags the right stick (the camera). The launcher's editor (games/p5r/java: ControlsEditor.java, which
-// has a copy of this table) moves any of them, the stick's ring included (NX_TOUCH_LAYOUT).
+// Persona landscape layout: four face buttons in the Xbox diamond at the bottom right, shoulder buttons in the top
+// corners, - and + at the top centre, and the d-pad above the left stick. P4G's launcher editor has a copy of this
+// table and can move every control, including the stick ring (NX_TOUCH_LAYOUT).
 //
 // Games without a layout here keep their own touch handling (Hades: zones around the thumb).
 //
@@ -50,7 +48,7 @@ const Named kWonder[] = {
     {"MINUS", {0.455f, 0.07f, 0.040f, kMinus, touch_label(kGlyphMinus)}},
 };
 
-const Named kP5R[] = {
+const Named kPersonaLandscape[] = {
     {"A", {0.940f, 0.66f, 0.068f, kA, touch_label(kGlyphA)}},
     {"B", {0.875f, 0.80f, 0.068f, kB, touch_label(kGlyphB)}},
     {"X", {0.875f, 0.52f, 0.068f, kX, touch_label(kGlyphX)}},
@@ -80,9 +78,7 @@ struct Layout {
 
 const Layout kLayouts[] = {
     {"wonder", kWonder, std::size(kWonder), false, kY, 0.15f, 0.72f},
-    {"p5r", kP5R, std::size(kP5R), true, 0, 0.15f, 0.76f},
-    // P4G shares P5R's positions and assigns Xbox labels and actions in buttons().
-    {"p4g", kP5R, std::size(kP5R), true, 0, 0.15f, 0.76f},
+    {"p4g", kPersonaLandscape, std::size(kPersonaLandscape), true, 0, 0.15f, 0.76f},
 };
 
 const Layout* layout() {
@@ -131,7 +127,7 @@ const std::vector<TouchButton>& buttons() {
         if (!l) return out;
         const bool xbox = std::strcmp(l->game, "p4g") == 0;
         // Keep NX_TOUCH_LAYOUT keys tied to their original positions, so existing
-        // custom layouts retain their geometry. kP5R starts with A, B, X, Y.
+        // Custom layouts retain their geometry. The source table starts with A, B, X, Y.
         constexpr size_t xbox_face[] = {1, 0, 3, 2};
         // P4G editor visibility is resolved once, before either drawing or hit testing. Keep legacy position keys.
         const char* hidden_env = xbox ? std::getenv("NX_TOUCH_HIDDEN") : nullptr;
@@ -151,7 +147,7 @@ const std::vector<TouchButton>& buttons() {
             TouchButton b = l->buttons[k].b;
             layout_entry(l->buttons[k].name, b.x, b.y, b.r);
             if (xbox && k < std::size(xbox_face)) {
-                const TouchButton& face = kP5R[xbox_face[k]].b;
+                const TouchButton& face = kPersonaLandscape[xbox_face[k]].b;
                 b.button = face.button;
                 b.label = face.label;
             }

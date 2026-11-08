@@ -196,7 +196,7 @@ set(NX_IMPORTER_DIR "${CMAKE_SOURCE_DIR}/android/wonder/importer")
 list(APPEND NX_RUNTIME_SOURCES runtime/src/game_image.cpp "${NX_IMPORTER_DIR}/nximport.cpp" "${NX_IMPORTER_DIR}/nxcrypto.cpp")
 if(WIN32)  # its POSIX calls, on Windows (only these two files see the shim)
     set_source_files_properties("${NX_IMPORTER_DIR}/nximport.cpp" "${NX_IMPORTER_DIR}/nxcrypto.cpp" PROPERTIES
-        INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/games/p5r/tools/win_compat"
+        INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/tools/win_compat"
         COMPILE_DEFINITIONS "_CRT_NONSTDC_NO_WARNINGS")
 endif()
 if(NX_NCE)
@@ -258,17 +258,6 @@ else()
         # main-thread stack (recompiled calls nest deeply); a link map for tools/symbolize.py.
         target_link_options(${NX_GAME} PRIVATE /STACK:67108864 /HIGHENTROPYVA:NO /MAP)
     endif()
-endif()
-
-# P5R's import on the phone (games/p5r/import, ImportActivity): the game file checked and its shaders extracted;
-# the translation itself is libspirvharness.so (games/p5r/tools/build_harness_android.sh).
-if(ANDROID AND NX_GAME STREQUAL "p5r")
-    add_library(p5rimport SHARED games/p5r/import/p5r_import_jni.cpp games/p5r/import/p5r_shaders.cpp
-        "${NX_IMPORTER_DIR}/nximport.cpp" "${NX_IMPORTER_DIR}/nxcrypto.cpp")
-    target_include_directories(p5rimport PRIVATE "${NX_IMPORTER_DIR}" games/p5r/import)
-    target_compile_options(p5rimport PRIVATE -O2 -fvisibility=hidden -march=armv8-a+crypto)
-    target_link_libraries(p5rimport PRIVATE log dl)
-    target_link_options(p5rimport PRIVATE -Wl,-z,max-page-size=16384)
 endif()
 
 # NX_RELEASE: the runtime and the game's glue only (the recompiled game code does not change with it).

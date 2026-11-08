@@ -1,11 +1,11 @@
 # Build a game's Android APK (NativeActivity, no Gradle): cmake (NDK) -> lib<game>.so -> aapt2 -> zipalign -> apksigner.
-# Usage, in a dev shell (. .\dev.ps1):  android\build_apk.ps1 [-Game <game>] [-Install]   (a folder under games\, default hades)
+# Usage, in a dev shell (. .\dev.ps1):  android\build_apk.ps1 [-Game <game>] [-Install]   (default p4g)
 #   -Nce          native execution (CMake NX_NCE): the APK holds no game code, it runs the exefs of the player's dump
 #                 (build in private\<game>\ba_nce, APK in private\<game>\apk_nce)
 #   -TestPackage  installs next to the normal build: package <package>.nce, label "<label> (NCE)"
 #   -Release      the public build (CMake NX_RELEASE: no nx.log file, no file-triggered diagnostics; logcat only);
 #                 without it the build directory keeps the setting it has
-param([string]$Game = "p5r", [switch]$Install, [switch]$Nce, [switch]$TestPackage, [switch]$Release)
+param([string]$Game = "p4g", [switch]$Install, [switch]$Nce, [switch]$TestPackage, [switch]$Release)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot
 # The SDK: ANDROID_HOME, else C:\Android\sdk, else Android Studio's default (%LOCALAPPDATA%\Android\Sdk).
@@ -27,14 +27,13 @@ if (-not (Test-Path "$build\build.ninja")) {
         -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 -DANDROID_STL=c++_static "-DNX_GAME=$Game" "-DNX_NCE=$nceFlag"
 }
 if ($Release) { cmake -B $build -DNX_RELEASE=ON | Out-Null }
-# Libraries packed with lib<game>.so: the P5R native build prepares the game on the phone (libp5rimport.so) with the
-# shader translator (libspirvharness.so, built in Docker by games/p5r/tools/build_harness_android.sh).
+# Libraries packed with libp4g.so: the importer and the source-built Maxwell shader translator.
 $extraLibs = @()
 $targets = @($Game)
-if ($Nce -and ($Game -eq "p5r" -or $Game -eq "p4g")) {
-    $harness = "$root\private\build\spirv_harness_android\libspirvharness.so"
+if ($Nce -and $Game -eq "p4g") {
+    $harness = "$root\build-apk\shader-libs\libspirvharness.so"
     if (-not (Test-Path $harness)) {
-        throw "missing $harness. Build it once, with Docker Desktop running, from the repository root: docker run --rm -v ""${root}:/src"" -w /src mcr.microsoft.com/dotnet/sdk:10.0 sh games/p5r/tools/build_harness_android.sh"
+        throw "missing $harness. Build it in Linux/WSL with tools/maxwell/build_p4g_translator.sh or download the shader-libs artifact from the P4G Beta workflow."
     }
     $importLib = "${Game}import"
     $targets += $importLib
@@ -56,9 +55,7 @@ foreach ($lib in $extraLibs) {
 }
 
 & "$bt\aapt2.exe" compile --dir "$PSScriptRoot\res" -o "$out\res.zip"
-# The launcher icon: the project's own (games\<game>\icon\res, e.g. games\p5r\tools\make_icon.py), else the game's,
-# when the player made it from their dump (private\<game>\icon\res, games\p5r\tools\nsp_icon.py): compiled with the
-# rest, and the manifest copy names it.
+# The launcher icon: use the game's project resources when present, otherwise private\<game>\icon\res.
 $manifest = "$root\games\$Game\AndroidManifest.xml"
 $resZips = @("$out\res.zip")
 $iconRes = if (Test-Path "$root\games\$Game\icon\res") { "$root\games\$Game\icon\res" } else { "$priv\icon\res" }

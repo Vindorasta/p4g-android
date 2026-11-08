@@ -30,7 +30,7 @@ import java.util.Map;
  * fractions of the screen mean the same.
  */
 public class ControlsEditor extends Activity {
-    // The game's layout (a copy of kP5R and the stick's place in runtime/src/touch_layout.cpp): name, label, x, y
+    // The game's landscape layout and the stick's place in runtime/src/touch_layout.cpp: name, label, x, y
     // (0..1 across the landscape screen), radius (a fraction of its height), group (moved together).
     static final String[] NAMES = {"A", "B", "X", "Y", "R", "ZR", "L", "ZL", "MINUS", "PLUS", "UP", "DOWN", "LEFT",
             "RIGHT", "STICK", "L3", "R3"};

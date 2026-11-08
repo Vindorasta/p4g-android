@@ -20,10 +20,7 @@ assignees: ""
 What you did, what you expected, and what happened instead. Where in the game (menu, scene, dungeon...).
 
 **Log**
-Connect the phone with USB debugging on, run this before starting the game, reproduce the problem, then stop it
-with Ctrl+C and attach `p5r-log.txt`:
-```
-adb logcat -s p5r:V > p5r-log.txt
-```
+Open **Diagnostics → Logs → Export** in the P4G launcher after reproducing the problem and attach the exported
+`P4G-logs-...txt` file. Review it for personal information before uploading it.
 
 Please do not attach game files, keys or saves of other people. No game files or keys are provided here.

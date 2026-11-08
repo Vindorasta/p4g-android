@@ -67,7 +67,7 @@ inline std::string language_from_system(std::string sys) {
 }
 
 // The device's language, or en-US when the game has no texts in it: NX_GAME_LANGUAGES (set by the game's glue, e.g.
-// games/p5r/game.cpp) lists the console codes it has, lowercase, space-separated. A code the game does not know may
+// the selected game's language table) lists the console codes it has, lowercase, space-separated. A code the game does not know may
 // send it to its first language (P5R: Japanese) instead of English.
 inline std::string language_for_game(std::string value) {
     const char* have = std::getenv("NX_GAME_LANGUAGES");
