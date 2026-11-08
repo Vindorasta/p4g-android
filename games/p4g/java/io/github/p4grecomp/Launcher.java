@@ -208,8 +208,9 @@ public class Launcher extends Activity {
                 new String[] {"0", "16:10", "1"},
                 new String[] {"16:9", "16:10", "Estirar"},
                 new String[] {"16:9", "16:10", "Stretch"}, 0));
-        options.add(new Option("NX_FPS_CAP", "Límite de FPS", "FPS limit", new String[] {"30", "60"},
-                new String[] {"30 FPS", "60 FPS"}, new String[] {"30 FPS", "60 FPS"}, 0));
+        options.add(new Option("NX_FPS_CAP", "Límite de FPS", "FPS limit", new String[] {"30", "45", "60"},
+                new String[] {"30 FPS", "45 FPS", "60 FPS"},
+                new String[] {"30 FPS", "45 FPS", "60 FPS"}, 0));
         options.add(new Option("NX_SHOW_FPS", "Contador de FPS", "FPS counter", new String[] {"0", "1"},
                 new String[] {"Desactivado", "Activado"}, new String[] {"Off", "On"}, 0));
         for (String metric : new String[] {"CPU", "GPU", "RAM"}) {

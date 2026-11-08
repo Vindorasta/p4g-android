@@ -588,17 +588,17 @@ void WindowSetPresentInterval(CPU& c) {
 // for every game, independently of Wonder's frame_time_probe above.
 void pace_present(int interval) {
     static const bool off = std::getenv("NX_NO_FRAME_LIMIT") != nullptr;
-    static const bool cap30 = [] {
+    static const int cap_fps = [] {
         const char* e = std::getenv("NX_FPS_CAP");
         const int cap = e ? std::atoi(e) : 0;
-        if (cap > 0 && cap <= 30) {
-            log("nvn: FPS limit 30: host presentation capped (all games)");
-            return true;
+        if (cap == 30 || cap == 45) {
+            log("nvn: FPS limit %d: host presentation capped (all games)", cap);
+            return cap;
         }
-        return false;
+        return 0;
     }();
     static PresentPacer pacer;
-    const uint64_t period = present_period_ns(interval, display_period_ns(), off, cap30);
+    const uint64_t period = present_period_ns(interval, display_period_ns(), off, cap_fps);
     uint64_t now = plat::monotonic_ns();
     const uint64_t deadline = pacer.deadline(now, period);
     if (!period) return;

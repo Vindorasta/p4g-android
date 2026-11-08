@@ -67,7 +67,7 @@ Back up your saves before updating. If Android rejects the update, check that bo
 |---|---|
 | Output resolution | Select 360p, 480p, 720p or 1080p. |
 | Fullscreen (stretch) | Fill the screen when enabled; preserve the game image's aspect ratio when disabled. |
-| FPS limit | Choose 30 FPS or the option labeled 60 FPS. |
+| FPS limit | Choose 30 FPS, 45 FPS or the option labeled 60 FPS. |
 | FPS counter | Show or hide the frame-rate counter. |
 | On-screen controls | Show or hide the touch controls. |
 | Button size | Adjust touch button size. |
@@ -82,7 +82,7 @@ Back up your saves before updating. If Android rejects the update, check that bo
 | Translation / CPK mod | Import a translation or replacement CPK package. |
 | Play | Start the game. |
 
-**30 FPS** applies a host-side frame-rate cap. **60 FPS** is the label for the existing game-default option: it does not guarantee a constant 60 FPS or override every frame-rate choice made by the game.
+**30 FPS** and **45 FPS** apply host-side frame-rate caps. **60 FPS** is the label for the existing game-default option: it does not guarantee a constant 60 FPS or override every frame-rate choice made by the game.
 
 The English app interface does not force the game itself into English. Game text and translation mods are separate.
 

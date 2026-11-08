@@ -4,12 +4,13 @@
 
 namespace nx::nvn {
 
-// The launcher's 60 setting means game default; 30 is an explicit host cap.
+// The launcher's 60 setting means game default; lower values are explicit host caps.
 // An explicit cap also applies to interval zero and diagnostic unpaced mode.
-constexpr uint64_t present_period_ns(int interval, uint64_t display_period, bool unpaced, bool cap30) {
+constexpr uint64_t present_period_ns(int interval, uint64_t display_period, bool unpaced, int cap_fps) {
     const uint64_t game_period = !unpaced && interval > 0 ? uint64_t(interval) * display_period : 0;
-    constexpr uint64_t cap_period = (1'000'000'000ull + 29) / 30;
-    return cap30 && game_period < cap_period ? cap_period : game_period;
+    const uint64_t cap_period = cap_fps > 0 && cap_fps < 60
+            ? (1'000'000'000ull + uint64_t(cap_fps) - 1) / uint64_t(cap_fps) : 0;
+    return cap_period && game_period < cap_period ? cap_period : game_period;
 }
 
 class PresentPacer {
