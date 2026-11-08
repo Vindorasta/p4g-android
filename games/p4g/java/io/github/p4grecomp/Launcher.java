@@ -232,6 +232,9 @@ public class Launcher extends Activity {
                 new String[] {"Original", "Sharper", "Sharper (-1, test)"}, 0));
         options.add(new Option("NX_TOUCH_SHOW", "Controles táctiles", "On-screen controls", new String[] {"1", "0"},
                 new String[] {"Activados", "Desactivados"}, new String[] {"On", "Off"}, 0));
+        options.add(new Option("NX_TOUCH_LEFT_STICK_MODE", "Modo del analógico izquierdo", "Left analog mode",
+                new String[] {"fixed", "floating"}, new String[] {"Fijo", "Flotante"},
+                new String[] {"Fixed", "Floating"}, 0));
         options.add(new Option("NX_TOUCH_SIZE", "Tamaño de los botones", "Button size",
                 new String[] {"80", "100", "125"}, new String[] {"Pequeño", "Normal", "Grande"},
                 new String[] {"Small", "Normal", "Large"}, 1));

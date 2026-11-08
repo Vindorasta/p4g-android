@@ -52,7 +52,7 @@
 namespace nx::plat {
 
 // ---- input: game controllers + touch --------------------------------------------------------------------------
-// Touch: left virtual stick; P4G keeps its base fixed, while legacy layouts remain relative to touch-down. The
+// Touch: left virtual stick; P4G can keep its base fixed, while floating/legacy layouts are relative to touch-down. The
 // right half has four buttons in a
 // diamond around the thumb (Y attack up-left, X special up-right, B dash down-left, A interact down-right), top
 // corners L / R, top centre +. Games with a drawn layout (touch_layout.cpp) use its buttons instead, and may make the
@@ -474,7 +474,7 @@ int32_t on_input(android_app* app, AInputEvent* e) {
         if (drawn || p4g_input()) {  // P4G keeps its stick/camera regions even when every button is hidden
             uint64_t b = touch_hit(x / g_w, y / g_h, g_w / g_h);
             const bool stick_side = !b && touch_stick_side(x / g_w);
-            const bool fixed_left = p4g_input();
+            const bool fixed_left = p4g_input() && touch_left_stick_fixed();
             const bool left = stick_side && (!fixed_left || touch_stick_hit(x / g_w, y / g_h, g_w / g_h));
             Stick stick = b ? kNoStick : left ? kLeftStick :
                     !stick_side && touch_right_stick() ? kRightStick : kNoStick;
@@ -634,7 +634,7 @@ size_t touch_overlay(OverlayShape* out, size_t max) {
     for (const auto& l : g_latched) held |= l.button;
     for (size_t i = 0; i < n && k < max; i++)
         out[k++] = {b[i].x, b[i].y, b[i].r, std::min(1.0f, (held & b[i].button ? 0.5f : 0.2f) * shade), b[i].label};
-    // The left stick keeps its configured ring fixed; the right camera stick remains relative to touch-down.
+    // Fixed mode uses the configured ring; floating left/right sticks remain relative to touch-down.
     auto draw_stick = [&](const Touch& t) {
         if (k + 2 > max) return;
         float r = 0.12f, dx = (t.x - t.x0) / g_h, dy = (t.y - t.y0) / g_h;

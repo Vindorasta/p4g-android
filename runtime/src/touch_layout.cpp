@@ -184,6 +184,16 @@ bool touch_mirrored() {
     return on;
 }
 
+// NX_TOUCH_LEFT_STICK_MODE=floating restores the original touch-down-relative base.
+// Missing/unknown values use the new fixed mode.
+bool touch_left_stick_fixed() {
+    static const bool fixed = [] {
+        const char* e = std::getenv("NX_TOUCH_LEFT_STICK_MODE");
+        return !e || std::strcmp(e, "floating") != 0;
+    }();
+    return fixed;
+}
+
 // NX_TOUCH_OPACITY (10..100, default 85): the drawn buttons' brightness relative to the original look.
 float touch_opacity_scale() {
     static const float s = float(std::clamp(env_int("NX_TOUCH_OPACITY", 85), 10, 100)) / 85.0f;
