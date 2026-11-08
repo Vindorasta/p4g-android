@@ -742,22 +742,29 @@ void hide_system_bars(JNIEnv* env, jobject activity) {
         env->ExceptionClear();
         return;
     }
+
     jclass winc = env->GetObjectClass(window);
-    jmethodID get_ctl = env->GetMethodID(winc, "getInsetsController", "()Landroid/view/WindowInsetsController;");
-    if (env->ExceptionCheck()) env->ExceptionClear();
-    jobject ctl = get_ctl ? env->CallObjectMethod(window, get_ctl) : nullptr;
-    if (env->ExceptionCheck()) env->ExceptionClear(), ctl = nullptr;
-    if (ctl) {  // Android 11+
-        jclass cc = env->GetObjectClass(ctl);
-        jclass types = env->FindClass("android/view/WindowInsets$Type");
-        jint bars = env->CallStaticIntMethod(types, env->GetStaticMethodID(types, "systemBars", "()I"));
-        env->CallVoidMethod(ctl, env->GetMethodID(cc, "setSystemBarsBehavior", "(I)V"), 2);  // show transient by swipe
-        env->CallVoidMethod(ctl, env->GetMethodID(cc, "hide", "(I)V"), bars);
+
+    if (android_get_device_api_level() >= 30) {
+        jmethodID get_ctl = env->GetMethodID(winc, "getInsetsController", "()Landroid/view/WindowInsetsController;");
+        if (env->ExceptionCheck()) env->ExceptionClear();
+
+        jobject ctl = get_ctl ? env->CallObjectMethod(window, get_ctl) : nullptr;
+        if (env->ExceptionCheck()) env->ExceptionClear(), ctl = nullptr;
+
+        if (ctl) {  // Android 11+
+            jclass cc = env->GetObjectClass(ctl);
+            jclass types = env->FindClass("android/view/WindowInsets$Type");
+            jint bars = env->CallStaticIntMethod(types, env->GetStaticMethodID(types, "systemBars", "()I"));
+            env->CallVoidMethod(ctl, env->GetMethodID(cc, "setSystemBarsBehavior", "(I)V"), 2);  // show transient by swipe
+            env->CallVoidMethod(ctl, env->GetMethodID(cc, "hide", "(I)V"), bars);
+        }
     } else {  // Android 10: immersive sticky | hide navigation | fullscreen | layout stable/hide navigation/fullscreen
         jobject decor = env->CallObjectMethod(window, env->GetMethodID(winc, "getDecorView", "()Landroid/view/View;"));
         if (decor)
             env->CallVoidMethod(decor, env->GetMethodID(env->GetObjectClass(decor), "setSystemUiVisibility", "(I)V"), 0x1706);
     }
+
     if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
