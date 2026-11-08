@@ -461,7 +461,8 @@ void build_sets(VkCommandBuffer cb, const std::vector<const ShaderInfo*>& shader
         for (const DescriptorBinding& b : s->refl.bindings) {
             const uint8_t* p;
             uint64_t size;
-            if (b.set < 2 && b.nvn.source == NvnSource::StorageBuffer && storage(s, b, api_stage(s->stage), p, size) &&
+            if (s->stage == ShaderStage::Compute && b.set < 2 && b.nvn.source == NvnSource::StorageBuffer &&
+                storage(s, b, api_stage(s->stage), p, size) &&
                 p && size && !written_separate())
                 written_bind(cb, p, size, std::max<uint64_t>((size + 15) & ~15ull, 0x10000));
         }
@@ -692,17 +693,9 @@ Upload zero_stream() {
 // colour) had its index buffer copied each time. Guest bytes, like the vertex streams, so dedup's rule holds; 8-bit
 // indices are widened per draw as before.
 bool draw_inputs_shared(VkCommandBuffer cb, const ShaderInfo* vs, bool indexed, const Cmd& c, DrawInputs& in) {
-    if (!indexed || draw_slow(kSlowUploads) || vk_index_type(c.mask) == VK_INDEX_TYPE_UINT8_EXT)
-        return draw_inputs(cb, vs, indexed, c, in);
-    draw_inputs(cb, vs, false, c, in);  // the vertex streams
-    const uint8_t* p = guest_bytes(c.a[0]);
-    if (!p) return false;
-    in.index_type = vk_index_type(c.mask);
-    uint64_t bytes = uint64_t(uint32_t(c.i[0])) * index_size(c.mask);
-    g_upload_kind = kUploadIndex;
-    if (!written_read(cb, p, bytes, bytes, index_size(c.mask), in.index)) in.index = dedup_upload(p, bytes, bytes, 16);
-    g_upload_kind = kUploadOther;
-    return true;
+    // Preserve the draw kind while computing vertex bounds; indexed c.i[] has a different layout.
+    // draw_inputs now shares 16/32-bit index uploads itself.
+    return draw_inputs(cb, vs, indexed, c, in);
 }
 
 void sets_begin_submit() {

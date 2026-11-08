@@ -15,7 +15,9 @@
 #include <vector>
 
 #include "nvn_draw_state.h"
+#include "nvn_upload_range.h"
 #include "platform.h"
+#include <nx/game.h>
 
 namespace nx::nvn {
 // Write-backs per log window (written_log): count, bytes compared, 8-byte words changed, host ns.
@@ -43,6 +45,17 @@ Regions g_regions;
 bool g_read = false;  // a copy was bound for reading since the last write_after_read
 uint64_t g_binds = 0;  // written_bind calls, ever (nvn_frames.cpp: did a dispatch write storage after the split)
 uint64_t g_shared = 0, g_merged = 0, g_composed = 0, g_indirect = 0;  // for written_log
+uint64_t g_vertex_full = 0, g_vertex_prefix = 0, g_vertex_trimmed = 0;
+
+bool vertex_upload_ranges() {
+    static const bool on = [] {
+        const char* e = std::getenv("NX_VERTEX_UPLOAD_RANGES");
+        const bool enabled = e ? e[0] == '1' : std::strcmp(game::kInfo.id, "p4g") == 0;
+        log("nvn: bounded vertex uploads %s (NX_VERTEX_UPLOAD_RANGES)", enabled ? "on" : "off");
+        return enabled;
+    }();
+    return on;
+}
 
 // The regions overlapping [p, p + size), in address order.
 std::vector<It> overlapping(const uint8_t* p, uint64_t size) {
@@ -201,11 +214,51 @@ bool draw_inputs(VkCommandBuffer cb, const ShaderInfo* vs, bool indexed, const C
     for (const ShaderIo& io : vs->refl.inputs)
         if (io.location < g_state.attribs.size() && g_state.attribs[io.location].stream < 15)
             in.used |= 1u << g_state.attribs[io.location].stream;
+    const bool trim = vertex_upload_ranges() && !draw_slow(kSlowUploads);
+    VertexUploadBound vertices;
+    if (trim && !indexed) vertices = array_upload_bound(uint32_t(c.i[0]), uint32_t(c.i[1]));
+    if (trim && indexed && c.i[0] > 0) {
+        const uint64_t index_bytes = uint64_t(uint32_t(c.i[0])) * index_size(c.mask);
+        uint64_t largest = 0;
+        for (uint32_t s = 0; s < 15; ++s)
+            if ((in.used >> s & 1) && s < g_state.streams.size() && !g_state.streams[s].divisor)
+                largest = std::max(largest, std::min<uint64_t>(g_state.vertex_buffers[s].size, 64ull << 20));
+        // Reading a large index buffer to save a small copy costs more than it saves. Bound the
+        // scan to 64 KB and only consider bindings much larger than their indices.
+        if (largest >= (16u << 10) && index_bytes <= (64u << 10) && largest >= index_bytes * 16) {
+            const uint8_t* indices = guest_bytes(c.a[0]);
+            if (indices && !written_overlaps(indices, index_bytes)) {
+                frame_guest_read(indices, index_bytes);  // previous submits' GPU write-backs first
+                vertices = index_upload_bound(indices, uint32_t(c.i[0]), index_size(c.mask), c.i[1]);
+            }
+        }
+    }
     for (uint32_t s = 0; s < 15; s++) {
         if (!(in.used >> s & 1)) continue;
         const Range& r = g_state.vertex_buffers[s];
         const uint8_t* p = r.address ? guest_bytes(r.address) : nullptr;
         uint64_t size = p ? std::min<uint64_t>(r.size, 64ull << 20) : 0;
+        const uint64_t full_size = size;
+        // Instanced streams and compute-written ranges keep the old path. Unknown formats also
+        // keep it: trimming is allowed only when every attribute of this stream has a known end.
+        if (trim && vertices.known && p && s < g_state.streams.size() && !g_state.streams[s].divisor &&
+            !written_overlaps(p, size)) {
+            uint64_t end = 0;
+            bool known = true;
+            for (const ShaderIo& io : vs->refl.inputs) {
+                if (io.location >= g_state.attribs.size()) continue;
+                const VertexAttrib& a = g_state.attribs[io.location];
+                if (a.stream != s) continue;
+                const uint32_t bytes = vk_block_bytes(vk_vertex_format(a.format));
+                if (!bytes) known = false;
+                end = std::max(end, uint64_t(a.offset) + bytes);
+            }
+            if (known) size = vertex_upload_prefix(size, g_state.streams[s].stride, end, vertices);
+        }
+        if (perf_stats_on()) {
+            g_vertex_full += full_size, g_vertex_prefix += size;
+            g_vertex_trimmed += size < full_size;
+        }
         g_upload_kind = kUploadVertex;
         in.vertex[s] = read_upload(cb, p, size, std::max<uint64_t>((size + 15) & ~15ull, 16), 16);
         g_upload_kind = kUploadOther;
@@ -227,7 +280,10 @@ bool draw_inputs(VkCommandBuffer cb, const ShaderInfo* vs, bool indexed, const C
         return true;
     }
     uint64_t bytes = uint64_t(count) * index_size(c.mask);
-    if (!written_read(cb, p, bytes, bytes, index_size(c.mask), in.index)) in.index = upload(p, bytes, 16);
+    g_upload_kind = kUploadIndex;
+    if (!written_read(cb, p, bytes, bytes, index_size(c.mask), in.index))
+        in.index = draw_slow(kSlowUploads) ? upload(p, bytes, 16) : dedup_upload(p, bytes, bytes, 16);
+    g_upload_kind = kUploadOther;
     return true;
 }
 
@@ -299,6 +355,10 @@ std::vector<WriteBack> written_take() {
 void written_reset() { g_regions.clear(), g_read = false; }
 
 void written_log() {
+    if (g_vertex_full)
+        log("nvn: vertex upload requests: %.2f MB bound, %.2f MB needed, %llu trimmed bindings (before dedup)",
+            double(g_vertex_full) / 1e6, double(g_vertex_prefix) / 1e6, (unsigned long long)g_vertex_trimmed);
+    g_vertex_full = g_vertex_prefix = g_vertex_trimmed = 0;
     if (g_shared + g_merged + g_composed + g_indirect)
         log("nvn: compute ranges: %llu bindings of written copies, %llu merged, %llu reads composed on the GPU, %llu indirect",
             (unsigned long long)g_shared, (unsigned long long)g_merged, (unsigned long long)g_composed,

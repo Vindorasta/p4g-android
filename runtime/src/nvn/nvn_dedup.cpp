@@ -12,6 +12,7 @@
 #include <unordered_map>
 
 #include "nvn_draw_state.h"
+#include "nvn_upload_range.h"
 
 namespace nx::nvn {
 uint64_t hash_memory(const uint8_t* p, uint64_t size);  // nvn_sampler.cpp
@@ -82,9 +83,24 @@ Upload dedup_upload(const uint8_t* p, uint64_t size, uint64_t padded, uint64_t a
         f = {p, g_generation, it->second};
         e = &f.entry;
     }
-    if (e && e->size == size && e->padded == padded && e->upload.offset % align == 0) {
+    if (e && upload_range_fits(e->size, e->padded, e->upload.offset, 0, size, padded, align)) {
         g_saved += padded;
         return e->upload;
+    }
+    // The immediately preceding copy may already cover this binding (meshes bound at different
+    // offsets into one vertex/index buffer). Do not install an alias in g_front: invalidating the
+    // original range must invalidate every reader, including these subrange hits.
+    if (!off) {
+        auto it = g_copies.upper_bound(p);
+        if (it != g_copies.begin()) {
+            --it;
+            const Entry& old = it->second;
+            const uint64_t delta = uintptr_t(p) - uintptr_t(it->first);
+            if (upload_range_fits(old.size, old.padded, old.upload.offset, delta, size, padded, align)) {
+                g_saved += padded;
+                return {old.upload.buffer, old.upload.offset + delta, old.upload.ptr + delta};
+            }
+        }
     }
     Upload u;
     if (g_upload_kind != kUploadOther && cache_upload(p, size, padded, align, u)) {  // nvn_buffer_cache.cpp
