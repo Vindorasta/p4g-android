@@ -404,6 +404,14 @@ public class Launcher extends Activity {
         LinearLayout overlay = settingsGroup(root, "overlay", "Overlay",
                 t("Durante el juego. CPU: 100% = un núcleo; RAM: memoria residente del juego. GPU no disponible en todos los teléfonos.",
                   "In-game stats. CPU: 100% = one core; RAM: game resident memory. GPU usage is unavailable on some phones."));
+        LinearLayout community = settingsGroup(root, "community", t("Comunidad", "Community"),
+                t("Proyecto, soporte y reportes", "Project, support and bug reports"));
+        addRow(community, "GitHub", t("Abrir", "Open"),
+                v -> openExternal("https://github.com/nxdevxz/p4g-android"));
+        addRow(community, "Discord", t("Unirse", "Join"),
+                v -> openExternal("https://discord.gg/yF6FtNK6rM"));
+        addRow(community, t("Reportar un problema", "Report an issue"), t("Abrir", "Open"),
+                v -> openExternal("https://github.com/nxdevxz/p4g-android/issues/new/choose"));
         boolean controlOptions = false;
         for (final Option o : options) {
             if ("NX_TOUCH_SHOW".equals(o.key)) controlOptions = true;
@@ -649,6 +657,14 @@ public class Launcher extends Activity {
 
     void tell(String title, String message) {
         new AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("OK", null).show();
+    }
+
+    void openExternal(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (Exception e) {
+            tell(t("No se pudo abrir el enlace", "Could not open link"), url);
+        }
     }
 
     void askImport() {
