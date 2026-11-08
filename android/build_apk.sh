@@ -86,10 +86,10 @@ PY
     fi
     "$bt/aapt2" compile --dir "$la/res" -o "$st/res.zip"
     "$bt/aapt2" link -o "$out/base.apk" -I "$jar" --manifest "$la/AndroidManifest.xml" --java "$st/gen" -A "$st/assets" \
-        --min-sdk-version 30 --target-sdk-version 35 "$st/res.zip"
+        --min-sdk-version 29 --target-sdk-version 35 "$st/res.zip"
     find "$la/java" "$st/gen" -name '*.java' > "$st/sources.txt"
     javac -nowarn -encoding UTF-8 --release 11 -cp "$jar" -d "$st/classes" @"$st/sources.txt"
-    (cd "$st/classes" && find . -name '*.class' > ../classes.txt && "$bt/d8" --release --min-api 30 --lib "$jar" --output .. @../classes.txt)
+    (cd "$st/classes" && find . -name '*.class' > ../classes.txt && "$bt/d8" --release --min-api 29 --lib "$jar" --output .. @../classes.txt)
     (cd "$st" && zip -q -j "$out/base.apk" classes.dex)
     (cd "$out" && zip -q -r -9 base.apk lib)
     "$bt/zipalign" -f -p 4 "$out/base.apk" "$out/aligned.apk"
