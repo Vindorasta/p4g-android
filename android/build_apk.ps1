@@ -100,7 +100,7 @@ if (Test-Path $java) {
     if ($LASTEXITCODE) { throw "javac failed" }
     $classes = @((Get-ChildItem "$out\classes" -Recurse -Filter *.class).FullName)
     $env:JAVA_HOME = $jdk
-    & "$bt\d8.bat" --release --min-api 30 --lib $jar --output "$out\dex" @classes
+    & "$bt\d8.bat" --release --min-api 29 --lib $jar --output "$out\dex" @classes
     if ($LASTEXITCODE) { throw "d8 failed" }
     [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($apk, "$out\dex\classes.dex", "classes.dex", "Optimal") | Out-Null
 }
